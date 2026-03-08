@@ -301,7 +301,7 @@ function calcularFreteMatriz(peso, indiceFaixa, reputacao) {
  * de envio do ML (Peso x Preço x Reputação) e encontrar o Preço de Venda Final.
  */
 
-function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML) {
+function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79) {
   if (!blocoVirtual) return "ERRO: Bloco Vazio";
 
   // --- 1. CARGA TRIBUTÁRIA E DIVISOR (A Tese do Século) ---
@@ -395,10 +395,20 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML) {
     var isAbaixo79 = (tier.col <= 2);
     var desconto = 0;
 
-    if (isAbaixo79) {
+    if (isAbaixo79 && forcarFreteRapidoSub79) {
+      // O seller quer rankear melhor! Pegamos o custo da Coluna 3 (Tabela de R$ 79)
+      freteCheio = buscarFreteTabelaCheia(pesoCobrado, 3);
+      // E aplicamos os descontos premium
+      if (isVerdeOuLider) desconto = 0.50;
+      else if (isAmarela) desconto = 0.40;
+    }
+    else if (isAbaixo79) {
+      // Fluxo Padrão Normal (< 79)
       if (isVerdeOuLider) desconto = 0.30;
       else if (isAmarela) desconto = 0.20;
-    } else {
+    }
+    else {
+      // Fluxo Padrão Normal (>= 79)
       if (isVerdeOuLider) desconto = 0.50;
       else if (isAmarela) desconto = 0.40;
     }
@@ -486,6 +496,9 @@ function processarPrecificacaoEmMassa() {
     var taxaCategoriaML = parseFloat(linha[4]) || 0; // Coluna E
     var tipoMargem = linha[5];              // Coluna F
     var margemCustomizada = parseFloat(linha[6]) || 0; // Coluna G
+
+    // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
+    var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM");
     
     // Ignora linhas vazias
     if (!skuAnunciado) {
@@ -502,7 +515,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML);
+    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido);
     
     // Empurra o resultado encapsulado em um array (exigência do Sheets para colunas)
     resultadosPrecoFinal.push([precoFinal]);
