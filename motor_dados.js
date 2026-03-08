@@ -14,9 +14,12 @@ function carregarBancoDeDados() {
   // Linha 0 é o cabeçalho, Linha 1 são os dados.
   var config = {
     reputacao: dadosConfig[1][0],
-    pisCofins: dadosConfig[1][1],
-    irpj: dadosConfig[1][2],
-    csll: dadosConfig[1][3]
+    pisCofins: dadosConfig[1][1] || 0,
+    irpj: dadosConfig[1][2] || 0,
+    csll: dadosConfig[1][3] || 0,
+    regimeTributario: dadosConfig[1][4],
+    tomarCredito: (String(dadosConfig[1][5]).trim().toUpperCase() === "SIM"),
+    baseCredito: dadosConfig[1][6]
   };
 
   // 1.2. Mapeando a TGFPRO (Catálogo e Logística Master)
@@ -307,7 +310,15 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
   // --- 1. CARGA TRIBUTÁRIA E DIVISOR (A Tese do Século) ---
   var cargaIcmsTotal = blocoVirtual.origemICMSArray[0].aliquota;
   var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsTotal) + config.irpj + config.csll;
-  var divisor = 1 - (taxaCategoriaML + blocoVirtual.margemPonderada + cargaIcmsTotal + fatorFederaisAjustado);
+
+  // LÓGICA DO CRÉDITO SOBRE A COMISSÃO
+  var taxaEfetivaML = taxaCategoriaML;
+  if (config.regimeTributario === "Lucro Real" && config.tomarCredito && config.baseCredito === "Frete + Comissões") {
+    // A comissão custa menos porque o seller recupera 9,25% do valor retido
+    taxaEfetivaML = taxaCategoriaML * (1 - config.pisCofins);
+  }
+
+  var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsTotal + fatorFederaisAjustado);
 
   if (divisor <= 0) return "ERRO: Divisor Negativo/Margem Excessiva";
 
@@ -414,6 +425,12 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     }
 
     var freteFinalSendoTestado = freteCheio * (1 - desconto);
+
+    // LÓGICA DO CRÉDITO SOBRE O FRETE (CT-e Ebazar)
+    if (config.regimeTributario === "Lucro Real" && config.tomarCredito) {
+      // Como o frete é insumo, nós recuperamos 9,25% (PIS/COFINS) sobre ele
+      freteFinalSendoTestado = freteFinalSendoTestado * (1 - config.pisCofins);
+    }
 
     // 5.3. A Álgebra do Preço
     if (tier.col === 0) {
