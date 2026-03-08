@@ -161,6 +161,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
  * cruzar com a matriz de fretes do ML e encontrar o Preço de Venda Final.
  */
 
+/*
 function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML) {
   if (!blocoVirtual) return "ERRO: Bloco Vazio";
 
@@ -291,6 +292,160 @@ function calcularFreteMatriz(peso, indiceFaixa, reputacao) {
   }
 
   return valorBase * (1 - percentualDesconto);
+}
+*/
+
+/**
+ * MÓDULO 2 (V2.0): O MOTOR FINANCEIRO (CORE PRICING - FRETE PADRÃO ML)
+ * Responsabilidade: Aplicar a carga tributária, varrer as matrizes tridimensionais
+ * de envio do ML (Peso x Preço x Reputação) e encontrar o Preço de Venda Final.
+ */
+
+function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML) {
+  if (!blocoVirtual) return "ERRO: Bloco Vazio";
+
+  // --- 1. CARGA TRIBUTÁRIA E DIVISOR (A Tese do Século) ---
+  var cargaIcmsTotal = blocoVirtual.origemICMSArray[0].aliquota;
+  var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsTotal) + config.irpj + config.csll;
+  var divisor = 1 - (taxaCategoriaML + blocoVirtual.margemPonderada + cargaIcmsTotal + fatorFederaisAjustado);
+
+  if (divisor <= 0) return "ERRO: Divisor Negativo/Margem Excessiva";
+
+  // --- 2. CONFIGURAÇÃO DAS FAIXAS DE PREÇO E COLUNAS DA MATRIZ ---
+  // A propriedade 'col' indica qual coluna da Tabela Cheia o algoritmo deve ler
+  var faixasDePreco = [
+    { min: 0.01,   max: 18.99,  col: 0 }, // Regra especial: Frete máx 50% do preço
+    { min: 19.00,  max: 48.99,  col: 1 },
+    { min: 49.00,  max: 78.99,  col: 2 },
+    { min: 79.00,  max: 99.99,  col: 3 }, // Barreira do Frete Rápido
+    { min: 100.00, max: 119.99, col: 4 },
+    { min: 120.00, max: 149.99, col: 5 },
+    { min: 150.00, max: 199.99, col: 6 },
+    { min: 200.00, max: 999999, col: 7 }
+  ];
+
+  // --- 3. PESAGEM E BUSCA DO FRETE BASE (TABELA CHEIA VERMELHA) ---
+  var pesoCobrado = Math.max(blocoVirtual.pesoFisicoMaster, blocoVirtual.cubagemMaster);
+  
+  // Função auxiliar que lê a matriz baseada no peso e na coluna
+  var buscarFreteTabelaCheia = function(peso, colunaIndex) {
+    // Array com os limites de peso em kg (Cada posição corresponde a uma linha da matriz abaixo)
+    var limitesPeso = [0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 11.0, 13.0, 15.0, 17.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 125.0, 150.0, 9999];
+    
+    // A Tabela Cheia (Validada no Excel)
+    var matrizFrete = [
+      [8.07, 9.36, 11.07, 24.70, 28.70, 32.90, 36.90, 41.90], // <= 0.3
+      [8.50, 9.50, 11.21, 26.50, 30.90, 35.30, 39.70, 45.10], // <= 0.5
+      [8.64, 9.64, 11.36, 27.70, 32.30, 36.90, 41.50, 47.30], // <= 1.0
+      [8.79, 9.79, 11.50, 28.30, 32.90, 37.70, 42.30, 49.30], // <= 1.5
+      [8.93, 9.93, 11.64, 28.90, 33.70, 38.50, 43.30, 49.30], // <= 2.0
+      [9.07, 11.36, 12.21, 31.50, 36.70, 42.10, 47.30, 52.50], // <= 3.0
+      [9.21, 11.64, 12.79, 34.10, 39.70, 45.30, 51.10, 56.70], // <= 4.0
+      [9.36, 11.93, 13.93, 36.90, 43.10, 49.30, 55.50, 61.50], // <= 5.0
+      [9.50, 12.21, 14.21, 50.90, 57.10, 65.30, 71.50, 79.50], // <= 6.0
+      [9.64, 12.50, 14.50, 54.10, 62.10, 72.10, 80.10, 88.10], // <= 7.0
+      [9.79, 12.79, 14.79, 57.70, 67.30, 76.90, 86.50, 96.10], // <= 8.0
+      [9.93, 13.07, 15.07, 59.30, 69.10, 79.10, 88.90, 98.70], // <= 9.0
+      [10.07, 13.64, 15.64, 82.50, 96.10, 109.90, 123.50, 137.30], // <= 11.0
+      [10.21, 14.21, 16.21, 84.30, 98.50, 112.50, 126.50, 140.50], // <= 13.0
+      [10.36, 14.50, 16.50, 90.10, 104.90, 119.90, 134.90, 149.90], // <= 15.0
+      [10.50, 14.79, 16.79, 97.10, 112.10, 127.10, 141.50, 157.30], // <= 17.0
+      [10.64, 15.07, 17.07, 109.50, 127.70, 145.90, 164.10, 182.30], // <= 20.0
+      [10.93, 15.64, 17.36, 128.10, 150.10, 169.50, 190.70, 211.90], // <= 25.0
+      [11.07, 15.93, 17.64, 131.90, 150.90, 171.10, 192.50, 213.90], // <= 30.0
+      [11.21, 16.21, 17.93, 135.50, 157.90, 177.90, 198.30, 214.10], // <= 40.0
+      [11.36, 16.50, 18.21, 140.50, 162.10, 184.10, 205.10, 221.50], // <= 50.0
+      [11.50, 16.79, 18.50, 149.90, 172.90, 196.30, 218.70, 236.30], // <= 60.0
+      [11.64, 17.07, 18.79, 160.50, 185.90, 210.10, 234.30, 253.10], // <= 70.0
+      [11.79, 17.36, 19.07, 167.90, 194.10, 219.70, 244.90, 264.50], // <= 80.0
+      [11.93, 17.64, 19.36, 186.50, 214.90, 244.10, 272.10, 293.90], // <= 90.0
+      [12.07, 17.93, 19.64, 213.10, 247.90, 279.10, 311.10, 335.90], // <= 100.0
+      [12.21, 18.21, 19.93, 238.50, 276.10, 312.10, 347.90, 375.90], // <= 125.0
+      [12.36, 18.21, 20.21, 253.10, 292.30, 331.30, 369.30, 398.90], // <= 150.0
+      [12.50, 18.21, 20.50, 332.30, 384.90, 435.10, 485.10, 523.90]  // > 150.0
+    ];
+
+    // Encontra a linha correspondente ao peso
+    var linhaIndex = limitesPeso.length - 1; // Fallback para o mais pesado
+    for (var p = 0; p < limitesPeso.length; p++) {
+      if (peso <= limitesPeso[p]) {
+        linhaIndex = p;
+        break;
+      }
+    }
+    return matrizFrete[linhaIndex][colunaIndex];
+  };
+
+  // --- 4. APLICAÇÃO DOS DESCONTOS AUDITADOS (VERDE VS AMARELA) ---
+  var repFormatada = String(config.reputacao).trim().toUpperCase();
+  var isVerdeOuLider = (repFormatada === "VERDE" || repFormatada === "LÍDER" || repFormatada === "LIDER" || repFormatada === "CINZA");
+  var isAmarela = (repFormatada === "AMARELA");
+
+  // --- 5. MOTOR DE BUSCA DO MELHOR PREÇO (O Loop de Tiers) ---
+  var melhorPreco = 999999;
+
+  for (var i = 0; i < faixasDePreco.length; i++) {
+    var tier = faixasDePreco[i];
+    var precoCalculado = 0;
+
+    // 5.1. Busca o frete na Tabela Cheia para a coluna que estamos testando
+    var freteCheio = buscarFreteTabelaCheia(pesoCobrado, tier.col);
+    
+    // 5.2. Aplica o multiplicador de desconto conforme a faixa (Abaixo ou Acima de R$ 79)
+    var isAbaixo79 = (tier.col <= 2);
+    var desconto = 0;
+
+    if (isAbaixo79) {
+      if (isVerdeOuLider) desconto = 0.30;
+      else if (isAmarela) desconto = 0.20;
+    } else {
+      if (isVerdeOuLider) desconto = 0.50;
+      else if (isAmarela) desconto = 0.40;
+    }
+
+    var freteFinalSendoTestado = freteCheio * (1 - desconto);
+
+    // 5.3. A Álgebra do Preço
+    if (tier.col === 0) {
+      // REGRA ESPECIAL: Anúncios até 18.99 pagam no máx 50% do valor do produto em frete.
+      var precoSemTrava = (blocoVirtual.custoTotal + freteFinalSendoTestado) / divisor;
+      
+      // Se o frete calculado representa mais de 50% do preço de venda, a trava do ML é acionada.
+      if (freteFinalSendoTestado > (precoSemTrava * 0.5)) {
+        // Recalculando o preço isolando a variável Custo: Preço = Custo / (Divisor - 0.5)
+        if ((divisor - 0.5) > 0) {
+          precoCalculado = blocoVirtual.custoTotal / (divisor - 0.5);
+        } else {
+          precoCalculado = 999999; // Margem inviável para itens muito baratos
+        }
+      } else {
+        precoCalculado = precoSemTrava; // Passou liso, o frete não atingiu 50%
+      }
+    } else {
+      // REGRA PADRÃO PARA AS DEMAIS FAIXAS
+      precoCalculado = (blocoVirtual.custoTotal + freteFinalSendoTestado) / divisor;
+    }
+
+    // 5.4. Blindagem Decimal e Teste de Validação
+    var precoArredondado = Math.round(precoCalculado * 100) / 100;
+
+    // Se o preço calculado "couber" matematicamente dentro da faixa que ditou o custo do frete, achamos o candidato perfeito!
+    if (precoArredondado >= tier.min && precoArredondado <= tier.max) {
+      if (precoCalculado < melhorPreco) {
+        melhorPreco = precoCalculado;
+      }
+    }
+  }
+
+  // --- 6. ZONA MORTA (Fallback de Segurança para preços astronômicos) ---
+  if (melhorPreco === 999999) {
+    var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7); // Última coluna (A partir de 200)
+    var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
+    var freteFallbackFinal = freteCheioFallback * (1 - descFallback);
+    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal) / divisor;
+  }
+
+  return Math.round(melhorPreco * 100) / 100;
 }
 
 
