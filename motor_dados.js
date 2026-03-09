@@ -67,6 +67,7 @@ function carregarBancoDeDados() {
   return { config: config, produtos: mapPro, kits: mapKit };
 }
 
+/*
 // 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
 function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db) {
   var prodMaster = db.produtos[skuAnunciado];
@@ -155,148 +156,101 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
 
   return bloco;
 }
-
-
-
-/**
- * MÓDULO 2: O MOTOR FINANCEIRO (CORE PRICING)
- * Responsabilidade: Receber o Bloco Virtual, aplicar a carga tributária,
- * cruzar com a matriz de fretes do ML e encontrar o Preço de Venda Final.
- */
-
-/*
-function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML) {
-  if (!blocoVirtual) return "ERRO: Bloco Vazio";
-
-  // --- 1. CARGA TRIBUTÁRIA E DIVISOR (A Tese do Século) ---
-  // Puxamos a alíquota que o Módulo 1 já ponderou perfeitamente
-  var cargaIcmsTotal = blocoVirtual.origemICMSArray[0].aliquota;
-
-  // Fator Federal Ajustado (PIS/COFINS sobre base sem ICMS)
-  var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsTotal) + config.irpj + config.csll;
-
-  // O Divisor Mágico: 1 - (Comissão ML + Margem + Impostos)
-  var divisor = 1 - (taxaCategoriaML + blocoVirtual.margemPonderada + cargaIcmsTotal + fatorFederaisAjustado);
-
-  if (divisor <= 0) return "ERRO: Divisor Negativo";
-
-  // --- 2. CONFIGURAÇÃO DAS FAIXAS (TIERS DO MERCADO LIVRE) ---
-  // No JS, em vez de vários Arrays soltos, usamos um Array de Objetos para organizar as regras
-  var faixas = [
-    { min: 0.01,   max: 12.50,  taxaFixa: -1 },   // 0: Regra dos 50%
-    { min: 12.51,  max: 28.99,  taxaFixa: 6.25 }, // 1: Taxa Fixa
-    { min: 29.00,  max: 49.99,  taxaFixa: 6.50 }, // 2: Taxa Fixa
-    { min: 50.00,  max: 78.99,  taxaFixa: 6.75 }, // 3: Taxa Fixa
-    { min: 79.00,  max: 99.99,  taxaFixa: 0 },    // 4: Frete Grátis
-    { min: 100.00, max: 119.99, taxaFixa: 0 },    // 5: Frete Grátis
-    { min: 120.00, max: 149.99, taxaFixa: 0 },    // 6: Frete Grátis
-    { min: 150.00, max: 199.99, taxaFixa: 0 },    // 7: Frete Grátis
-    { min: 200.00, max: 999999, taxaFixa: 0 }     // 8: Frete Grátis
-  ];
-
-  // --- 3. PESAGEM: BALANÇA VS TRENA ---
-  // Math.max pega automaticamente o maior valor entre os dois informados
-  var pesoCobrado = Math.max(blocoVirtual.pesoFisicoMaster, blocoVirtual.cubagemMaster);
-
-  // --- 4. MOTOR DE BUSCA DO MELHOR PREÇO (O Loop Top-Down) ---
-  var melhorPreco = 999999;
-  var precoCalculado = 0;
-
-  for (var i = 0; i < faixas.length; i++) {
-    var tier = faixas[i];
-    var custoFrete = 0;
-    var custoFixo = 0;
-
-    if (i === 0) {
-      // Regra Especial: Baixíssimo Ticket
-      if ((divisor - 0.5) > 0) {
-        precoCalculado = blocoVirtual.custoTotal / (divisor - 0.5);
-      } else {
-        precoCalculado = 999999;
-      }
-    } else if (i <= 3) {
-      // Regras de Taxa Fixa (Abaixo de R$ 79)
-      custoFixo = tier.taxaFixa;
-      precoCalculado = (blocoVirtual.custoTotal + custoFixo) / divisor;
-    } else {
-      // Regras de Frete Grátis Subsidiado (Acima de R$ 79)
-      custoFrete = calcularFreteMatriz(pesoCobrado, i, config.reputacao);
-      precoCalculado = (blocoVirtual.custoTotal + custoFrete) / divisor;
-    }
-
-    // Blindagem de Ponto Flutuante: Arredonda para 2 casas decimais antes de testar
-    var precoArredondado = Math.round(precoCalculado * 100) / 100;
-
-    // Validação: O preço encontrado "cabe" dentro da regra em que foi testado?
-    if (precoArredondado >= tier.min && precoArredondado <= tier.max) {
-      if (precoCalculado < melhorPreco) {
-        melhorPreco = precoCalculado;
-      }
-    }
-  }
-
-  // --- 5. ZONA MORTA (Fallback de Segurança) ---
-  if (melhorPreco === 999999) {
-    var freteFallback = calcularFreteMatriz(pesoCobrado, 8, config.reputacao);
-    melhorPreco = (blocoVirtual.custoTotal + freteFallback) / divisor;
-  }
-
-  return Math.round(melhorPreco * 100) / 100;
-}
-
-// --- FUNÇÃO AUXILIAR: MATRIZ DE FRETES ---
-function calcularFreteMatriz(peso, indiceFaixa, reputacao) {
-  var valorBase = 0;
-
-  // A cascata de peso (Idêntica ao seu VBA)
-  if (peso <= 0.3) valorBase = 39.90;
-  else if (peso <= 0.5) valorBase = 42.90;
-  else if (peso <= 1.0) valorBase = 44.90;
-  else if (peso <= 2.0) valorBase = 46.90;
-  else if (peso <= 3.0) valorBase = 49.90;
-  else if (peso <= 4.0) valorBase = 53.90;
-  else if (peso <= 5.0) valorBase = 56.90;
-  else if (peso <= 9.0) valorBase = 88.90;
-  else if (peso <= 13.0) valorBase = 131.90;
-  else if (peso <= 17.0) valorBase = 146.90;
-  else if (peso <= 23.0) valorBase = 171.90;
-  else if (peso <= 30.0) valorBase = 197.90;
-  else if (peso <= 40.0) valorBase = 203.90;
-  else if (peso <= 50.0) valorBase = 210.90;
-  else if (peso <= 60.0) valorBase = 224.90;
-  else if (peso <= 70.0) valorBase = 240.90;
-  else if (peso <= 80.0) valorBase = 251.90;
-  else if (peso <= 90.0) valorBase = 279.90;
-  else if (peso <= 100.0) valorBase = 319.90;
-  else if (peso <= 125.0) valorBase = 357.90;
-  else if (peso <= 150.0) valorBase = 379.90;
-  else valorBase = 498.90;
-
-  // Limpeza de String: Remove espaços e coloca em maiúsculo
-  var repFormatada = String(reputacao).trim().toUpperCase();
-  var percentualDesconto = 0;
-
-  if (repFormatada === "LÍDER" || repFormatada === "LIDER" || repFormatada === "VERDE" || repFormatada === "CINZA") {
-    switch (indiceFaixa) {
-      case 4: percentualDesconto = 0.70; break;
-      case 5: percentualDesconto = 0.65; break;
-      case 6: percentualDesconto = 0.60; break;
-      case 7: percentualDesconto = 0.55; break;
-      case 8: percentualDesconto = 0.50; break;
-    }
-  } else if (repFormatada === "AMARELA") {
-    switch (indiceFaixa) {
-      case 4: percentualDesconto = 0.60; break;
-      case 5: percentualDesconto = 0.55; break;
-      case 6: percentualDesconto = 0.50; break;
-      case 7: percentualDesconto = 0.45; break;
-      case 8: percentualDesconto = 0.40; break;
-    }
-  }
-
-  return valorBase * (1 - percentualDesconto);
-}
 */
+
+// 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
+function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db) {
+  var prodMaster = db.produtos[skuAnunciado];
+  if (!prodMaster) return null; // Trava de segurança: SKU não existe na TGFPRO
+
+  var bloco = {
+    custoTotal: 0,
+    margemPonderada: 0,
+    pesoFisicoMaster: prodMaster.pesoKg * qtdNoAnuncio,
+    cubagemMaster: ((prodMaster.comprimento * prodMaster.largura * prodMaster.altura) / 6000) * qtdNoAnuncio,
+    origemICMSArray: [], // Guardará {valorAlvoAbsoluto, destaque, caixa}
+    icmsDestaquePonderado: 0,
+    icmsCaixaPonderado: 0
+  };
+
+  var regimeFormatado = String(regimeIcmsSaida).trim();
+
+  // Função auxiliar para definir Destaque e Caixa baseado na origem e no regime
+  var definirImpostos = function(origem) {
+    var alqOrigem = (origem === 1 || origem === 2 || origem === 3 || origem === 8) ? 0.04 : 0.12;
+    var res = { destaque: 0, caixa: 0 };
+    
+    if (regimeFormatado === "Débito") {
+      res.destaque = alqOrigem; res.caixa = alqOrigem;
+    } else if (regimeFormatado === "Estorno") {
+      res.destaque = alqOrigem; res.caixa = 0; // O brilhantismo da Carga Líquida CE
+    }
+    // Se for "Isento", mantém 0 e 0.
+    return res;
+  };
+
+  // 2.1. CÁLCULO SE FOR PRODUTO SIMPLES
+  if (prodMaster.tipoProduto === "Simples") {
+    bloco.custoTotal = prodMaster.custoAquisicao * qtdNoAnuncio;
+    bloco.margemPonderada = (tipoMargem === "Do anúncio") ? margemCustomizada : prodMaster.margemPadrao;
+    
+    var impostos = definirImpostos(prodMaster.origemProduto);
+    bloco.icmsDestaquePonderado = impostos.destaque;
+    bloco.icmsCaixaPonderado = impostos.caixa;
+  } 
+  
+  // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
+  else if (prodMaster.tipoProduto === "Kit") {
+    var componentes = db.kits[skuAnunciado];
+    if (!componentes) return null;
+
+    var lucroAbsolutoTotal = 0;
+
+    for (var k = 0; k < componentes.length; k++) {
+      var comp = componentes[k];
+      var dadosComp = db.produtos[comp.skuComponente];
+      
+      var custoParte = (dadosComp.custoAquisicao * comp.qtdComponente) * qtdNoAnuncio;
+      bloco.custoTotal += custoParte;
+
+      var margemDestaParte = 0;
+      if (tipoMargem === "Do anúncio") margemDestaParte = margemCustomizada;
+      else if (tipoMargem === "Do kit" && comp.margemKit !== null) margemDestaParte = comp.margemKit;
+      else margemDestaParte = dadosComp.margemPadrao; 
+
+      var lucroParte = custoParte * margemDestaParte;
+      lucroAbsolutoTotal += lucroParte;
+
+      var impostosParte = definirImpostos(dadosComp.origemProduto);
+      
+      bloco.origemICMSArray.push({
+        valorAlvoAbsoluto: custoParte + lucroParte,
+        destaque: impostosParte.destaque,
+        caixa: impostosParte.caixa
+      });
+    }
+
+    bloco.margemPonderada = lucroAbsolutoTotal / bloco.custoTotal;
+    var valorAlvoTotalDoBloco = bloco.custoTotal + lucroAbsolutoTotal;
+
+    var destaqueSinteticoAcumulado = 0;
+    var caixaSinteticoAcumulado = 0;
+
+    for (var m = 0; m < bloco.origemICMSArray.length; m++) {
+      var itemICMS = bloco.origemICMSArray[m];
+      var pesoProporcional = itemICMS.valorAlvoAbsoluto / valorAlvoTotalDoBloco;
+      destaqueSinteticoAcumulado += (itemICMS.destaque * pesoProporcional);
+      caixaSinteticoAcumulado += (itemICMS.caixa * pesoProporcional);
+    }
+
+    bloco.icmsDestaquePonderado = destaqueSinteticoAcumulado;
+    bloco.icmsCaixaPonderado = caixaSinteticoAcumulado;
+  }
+
+  return bloco;
+}
+
+
 
 /**
  * MÓDULO 2 (V2.0): O MOTOR FINANCEIRO (CORE PRICING - FRETE PADRÃO ML)
@@ -304,21 +258,31 @@ function calcularFreteMatriz(peso, indiceFaixa, reputacao) {
  * de envio do ML (Peso x Preço x Reputação) e encontrar o Preço de Venda Final.
  */
 
-function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79) {
+function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79, alqDestino, fecopDestino) {
   if (!blocoVirtual) return "ERRO: Bloco Vazio";
 
-  // --- 1. CARGA TRIBUTÁRIA E DIVISOR (A Tese do Século) ---
-  var cargaIcmsTotal = blocoVirtual.origemICMSArray[0].aliquota;
-  var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsTotal) + config.irpj + config.csll;
+  // --- 1. CARGA TRIBUTÁRIA E DIVISOR (Tese do Século, DIFAL e Lucro Real) ---
+  var cargaIcmsDestaque = blocoVirtual.icmsDestaquePonderado;
+  var cargaIcmsCaixa = blocoVirtual.icmsCaixaPonderado;
 
-  // LÓGICA DO CRÉDITO SOBRE A COMISSÃO
+  // Cálculo do DIFAL: Diferença positiva entre a Carga de Destino e o Destaque da Operação Própria
+  var cargaDestinoTotal = alqDestino + fecopDestino;
+  var difal = 0;
+  if (cargaDestinoTotal > 0) {
+    difal = Math.max(0, cargaDestinoTotal - cargaIcmsDestaque);
+  }
+
+  // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
+  // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
+  var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
+
+  // LÓGICA DO CRÉDITO SOBRE A COMISSÃO (Lucro Real)
   var taxaEfetivaML = taxaCategoriaML;
   if (config.regimeTributario === "Lucro Real" && config.tomarCredito && config.baseCredito === "Frete + Comissões") {
-    // A comissão custa menos porque o seller recupera 9,25% do valor retido
     taxaEfetivaML = taxaCategoriaML * (1 - config.pisCofins);
   }
 
-  var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsTotal + fatorFederaisAjustado);
+  var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsCaixa + difal + fatorFederaisAjustado);
 
   if (divisor <= 0) return "ERRO: Divisor Negativo/Margem Excessiva";
 
@@ -426,9 +390,8 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
     var freteFinalSendoTestado = freteCheio * (1 - desconto);
 
-    // LÓGICA DO CRÉDITO SOBRE O FRETE (CT-e Ebazar)
-    if (config.regimeTributario === "Lucro Real" && config.tomarCredito) {
-      // Como o frete é insumo, nós recuperamos 9,25% (PIS/COFINS) sobre ele
+    // LÓGICA DO CRÉDITO SOBRE O FRETE (CT-e para Lucro Real)
+    if (config.regimeTributario === "Lucro Real" && config.tomarCredito && (config.baseCredito === "Frete" || config.baseCredito === "Frete + Comissões")) {
       freteFinalSendoTestado = freteFinalSendoTestado * (1 - config.pisCofins);
     }
 
@@ -508,14 +471,19 @@ function processarPrecificacaoEmMassa() {
     var linha = dadosAds[i];
     
     // Mapeamento das colunas da TGFADS (Lembrando: Índice começa no ZERO)
-    var skuAnunciado = linha[1];            // Coluna B
-    var qtdNoAnuncio = parseFloat(linha[2]) || 1; // Coluna C
-    var taxaCategoriaML = parseFloat(linha[4]) || 0; // Coluna E
-    var tipoMargem = linha[5];              // Coluna F
-    var margemCustomizada = parseFloat(linha[6]) || 0; // Coluna G
+    var skuAnunciado = linha[1];                        // Coluna B
+    var qtdNoAnuncio = parseFloat(linha[2]) || 1;       // Coluna C
+    var taxaCategoriaML = parseFloat(linha[4]) || 0;    // Coluna E
+    var tipoMargem = linha[5];                          // Coluna F
+    var margemCustomizada = parseFloat(linha[6]) || 0;  // Coluna G
+
+    // VARIÁVEIS FISCAIS E TÁTICAS
+    var alqDestino = parseFloat(linha[7]) || 0;                             // Coluna H
+    var fecopDestino = parseFloat(linha[8]) || 0;                           // Coluna I
+    var regimeIcmsSaida = linha[9] || "Débito";                             // Coluna J (Fallback de segurança)
 
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
-    var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM");
+    var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM"); // Coluna K
     
     // Ignora linhas vazias
     if (!skuAnunciado) {
@@ -524,7 +492,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
-    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db);
+    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db);
     
     if (!bloco) {
       resultadosPrecoFinal.push(["ERRO: SKU não encontrado"]);
@@ -532,7 +500,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido);
+    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
     
     // Empurra o resultado encapsulado em um array (exigência do Sheets para colunas)
     resultadosPrecoFinal.push([precoFinal]);
