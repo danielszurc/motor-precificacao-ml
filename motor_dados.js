@@ -19,7 +19,9 @@ function carregarBancoDeDados() {
     csll: dadosConfig[1][3] || 0,
     regimeTributario: dadosConfig[1][4],
     tomarCredito: (String(dadosConfig[1][5]).trim().toUpperCase() === "SIM"),
-    baseCredito: dadosConfig[1][6]
+    baseCredito: dadosConfig[1][6],
+    cargaSnNormal: parseFloat(dadosConfig[1][7]) || 0,
+    cargaSnSt: parseFloat(dadosConfig[1][8]) || 0
   };
 
   // 1.2. Mapeando a TGFPRO (Catálogo e Logística Master)
@@ -67,96 +69,7 @@ function carregarBancoDeDados() {
   return { config: config, produtos: mapPro, kits: mapKit };
 }
 
-/*
-// 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
-function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db) {
-  var prodMaster = db.produtos[skuAnunciado];
-  if (!prodMaster) return null; // Trava de segurança: SKU não existe na TGFPRO
 
-  var bloco = {
-    custoTotal: 0,
-    margemPonderada: 0,
-    pesoFisicoMaster: prodMaster.pesoKg * qtdNoAnuncio,
-    cubagemMaster: ((prodMaster.comprimento * prodMaster.largura * prodMaster.altura) / 6000) * qtdNoAnuncio,
-    origemICMSArray: [] // Guardará {pesoFinanceiro, aliquotaICMS} para o liquidificador fiscal
-  };
-
-  // 2.1. CÁLCULO SE FOR PRODUTO SIMPLES
-  if (prodMaster.tipoProduto === "Simples") {
-    bloco.custoTotal = prodMaster.custoAquisicao * qtdNoAnuncio;
-    
-    // Definição da Margem Simples
-    if (tipoMargem === "Do anúncio") {
-      bloco.margemPonderada = margemCustomizada;
-    } else {
-      bloco.margemPonderada = prodMaster.margemPadrao;
-    }
-
-    // Regra da Alíquota de Origem (Nacional vs Importado)
-    var aliquotaOrigem = (prodMaster.origemProduto === 1 || prodMaster.origemProduto === 2 || prodMaster.origemProduto === 3 || prodMaster.origemProduto === 8) ? 0.04 : 0.12;
-    
-    // Como é simples, o peso financeiro dele é 100% (1.0)
-    bloco.origemICMSArray.push({ pesoFinanceiro: 1.0, aliquota: aliquotaOrigem });
-  } 
-  
-  // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
-  else if (prodMaster.tipoProduto === "Kit") {
-    var componentes = db.kits[skuAnunciado];
-    if (!componentes) return null; // Kit sem receita
-
-    var lucroAbsolutoTotal = 0;
-
-    // Loop pelas partes para descobrir o custo e o lucro esperado (em R$) de cada uma
-    for (var k = 0; k < componentes.length; k++) {
-      var comp = componentes[k];
-      var dadosComp = db.produtos[comp.skuComponente];
-      
-      var custoParte = (dadosComp.custoAquisicao * comp.qtdComponente) * qtdNoAnuncio;
-      bloco.custoTotal += custoParte;
-
-      var margemDestaParte = 0;
-      // Árvore de decisão da margem do kit
-      if (tipoMargem === "Do anúncio") {
-        margemDestaParte = margemCustomizada;
-      } else if (tipoMargem === "Do kit" && comp.margemKit !== null) {
-        margemDestaParte = comp.margemKit;
-      } else {
-        margemDestaParte = dadosComp.margemPadrao; // Fallback para "Do produto"
-      }
-
-      var lucroParte = custoParte * margemDestaParte;
-      lucroAbsolutoTotal += lucroParte;
-
-      // Descobrindo a alíquota de origem desta peça específica
-      var aliquotaParte = (dadosComp.origemProduto === 1 || dadosComp.origemProduto === 2 || dadosComp.origemProduto === 3 || dadosComp.origemProduto === 8) ? 0.04 : 0.12;
-      
-      // Empurramos o Valor Alvo (Custo + Lucro) e a alíquota para o array para ponderar depois
-      bloco.origemICMSArray.push({
-        valorAlvoAbsoluto: custoParte + lucroParte,
-        aliquota: aliquotaParte
-      });
-    }
-
-    // Calculando a Margem Ponderada Final do Kit inteiro
-    bloco.margemPonderada = lucroAbsolutoTotal / bloco.custoTotal;
-
-    // Calculando a Carga Tributária Ponderada (ICMS Sintético)
-    var valorAlvoTotalDoBloco = bloco.custoTotal + lucroAbsolutoTotal;
-    var aliquotaSinteticaAcumulada = 0;
-
-    for (var m = 0; m < bloco.origemICMSArray.length; m++) {
-      var itemICMS = bloco.origemICMSArray[m];
-      var pesoProporcional = itemICMS.valorAlvoAbsoluto / valorAlvoTotalDoBloco;
-      aliquotaSinteticaAcumulada += (itemICMS.aliquota * pesoProporcional);
-    }
-
-    // Sobrescrevemos o array original deixando apenas o resultado sintético de 100% de peso
-    bloco.origemICMSArray = [{ pesoFinanceiro: 1.0, aliquota: aliquotaSinteticaAcumulada }];
-  }
-
-  return bloco;
-}
-*/
 
 // 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
 function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db) {
@@ -258,7 +171,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
  * de envio do ML (Peso x Preço x Reputação) e encontrar o Preço de Venda Final.
  */
 
-function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79, alqDestino, fecopDestino) {
+function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79, alqDestino, fecopDestino, regimeIcmsSaida) {
   if (!blocoVirtual) return "ERRO: Bloco Vazio";
 
   // --- 1. CARGA TRIBUTÁRIA E DIVISOR (Tese do Século, DIFAL e Lucro Real) ---
@@ -266,15 +179,35 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
   var cargaIcmsCaixa = blocoVirtual.icmsCaixaPonderado;
 
   // Cálculo do DIFAL: Diferença positiva entre a Carga de Destino e o Destaque da Operação Própria
-  var cargaDestinoTotal = alqDestino + fecopDestino;
   var difal = 0;
-  if (cargaDestinoTotal > 0) {
-    difal = Math.max(0, cargaDestinoTotal - cargaIcmsDestaque);
-  }
+  var fatorFederaisAjustado = 0;
 
-  // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
-  // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
-  var fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
+  if (config.regimeTributario === "Simples Nacional") {
+    // LÓGICA EXCLUSIVA: SIMPLES NACIONAL
+    // 1. Imunidade de DIFAL (Tema 517 STF)
+    difal = 0;
+    
+    // 2. O ICMS próprio já está embutido no DAS, então zeramos o caixa para evitar bitributação
+    cargaIcmsCaixa = 0; 
+    
+    // 3. Segregação de Receitas (CSOSN)
+    var regimeFormatado = String(regimeIcmsSaida).trim();
+    if (regimeFormatado === "Débito") {
+      fatorFederaisAjustado = config.cargaSnNormal;
+    } else { // "Estorno" ou "Isento"
+      fatorFederaisAjustado = config.cargaSnSt;
+    }
+
+  } else {
+    // LÓGICA DO REGIME NORMAL (Presumido ou Real)
+    var cargaDestinoTotal = alqDestino + fecopDestino;
+    if (cargaDestinoTotal > 0) {
+      difal = Math.max(0, cargaDestinoTotal - cargaIcmsDestaque);
+    }
+    // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
+    // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
+    fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
+  }
 
   // LÓGICA DO CRÉDITO SOBRE A COMISSÃO (Lucro Real)
   var taxaEfetivaML = taxaCategoriaML;
@@ -500,7 +433,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
+    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
     
     // Empurra o resultado encapsulado em um array (exigência do Sheets para colunas)
     resultadosPrecoFinal.push([precoFinal]);
