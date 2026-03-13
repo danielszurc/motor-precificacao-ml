@@ -142,7 +142,8 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       bloco.origemICMSArray.push({
         valorAlvoAbsoluto: custoParte + lucroParte,
         destaque: impostosParte.destaque,
-        caixa: impostosParte.caixa
+        caixa: impostosParte.caixa,
+        ipi: dadosComp.ipi
       });
     }
 
