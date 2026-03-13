@@ -307,6 +307,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
   // --- 5. MOTOR DE BUSCA DO MELHOR PREÇO (O Loop de Tiers) ---
   var melhorPreco = 999999;
+  var freteDoMelhorPreco = 0;
 
   for (var i = 0; i < faixasDePreco.length; i++) {
     var tier = faixasDePreco[i];
@@ -372,19 +373,83 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     if (precoArredondado >= tier.min && precoArredondado <= tier.max) {
       if (precoCalculado < melhorPreco) {
         melhorPreco = precoCalculado;
+        freteDoMelhorPreco = freteFinalSendoTestado;
       }
     }
   }
 
   // --- 6. ZONA MORTA (Fallback de Segurança para preços astronômicos) ---
+  /*
   if (melhorPreco === 999999) {
     var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7); // Última coluna (A partir de 200)
     var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
     var freteFallbackFinal = freteCheioFallback * (1 - descFallback);
     melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal) / divisor;
   }
+  */
 
-  return Math.round(melhorPreco * 100) / 100;
+  if (melhorPreco === 999999) {
+    var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7);
+    var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
+    var freteFallbackFinal = freteCheioFallback * (1 - descFallback);
+    
+    if (config.regimeTributario === "Lucro Real" && config.tomarCredito && (config.baseCredito === "Frete" || config.baseCredito === "Frete + Comissões")) {
+      freteFallbackFinal = freteFallbackFinal * (1 - config.pisCofins);
+    }
+    
+    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal) / divisor;
+    freteDoMelhorPreco = freteFallbackFinal;
+  }
+
+  // --- 7. MONTAGEM DA AUDITORIA FISCAL (DRE DA VENDA) ---
+  var pFinal = Math.round(melhorPreco * 100) / 100;
+  
+  // Recalculando os valores absolutos em R$ baseados no preço final cravado
+  var calcComissao = pFinal * taxaEfetivaML;
+  var calcIcmsCaixa = pFinal * cargaIcmsCaixa;
+  var calcIpi = pFinal * cargaIpiEfetiva;
+  
+  var calcDifal = 0;
+  var calcFecop = 0;
+  var calcPisCofins = 0;
+  var calcIrpj = 0;
+  var calcCsll = 0;
+
+  if (config.regimeTributario === "Simples Nacional") {
+    calcPisCofins = pFinal * fatorFederaisAjustado; // O DAS inteiro fica aqui
+  } else {
+    // Desmembrando DIFAL e FECOP para a auditoria
+    if ((alqDestino + fecopDestino) > 0) {
+      var difalTotalMath = Math.max(0, (alqDestino + fecopDestino) - cargaIcmsDestaque);
+      calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal; 
+      calcDifal = (difalTotalMath * pFinal) - calcFecop;
+    }
+    var baseBruta = 1 - cargaIpiEfetiva;
+    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque));
+    calcIrpj = pFinal * (config.irpj * baseBruta);
+    calcCsll = pFinal * (config.csll * baseBruta);
+  }
+
+  // A Margem Líquida calculada por resíduo garante que a soma das colunas bata 100% com o Preço
+  var calcMargem = pFinal - blocoVirtual.custoTotal - calcComissao - freteDoMelhorPreco - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
+
+  // Devolve o Objeto Completo!
+  return {
+    preco: pFinal,
+    custo: blocoVirtual.custoTotal,
+    comissao: calcComissao,
+    frete: freteDoMelhorPreco,
+    icms: calcIcmsCaixa,
+    difal: calcDifal,
+    fecop: calcFecop,
+    pisCofins: calcPisCofins,
+    ipi: calcIpi,
+    irpj: calcIrpj,
+    csll: calcCsll,
+    margem: calcMargem
+  };
+
+  // return Math.round(melhorPreco * 100) / 100;
 }
 
 
@@ -434,30 +499,63 @@ function processarPrecificacaoEmMassa() {
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
     var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM"); // Coluna K
     
+    /*
     // Ignora linhas vazias
     if (!skuAnunciado) {
       resultadosPrecoFinal.push([""]); // Empurra uma célula vazia para manter o alinhamento
+      continue;
+    }
+    */
+    
+    // Ignora linhas vazias mantendo o alinhamento da matriz (12 colunas)
+    if (!skuAnunciado) {
+      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", ""]); 
       continue;
     }
     
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
     var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db);
     
+    /*
     if (!bloco) {
       resultadosPrecoFinal.push(["ERRO: SKU não encontrado"]);
       continue;
     }
+    */
+
+    if (!bloco) {
+      // Se der erro, empurra uma linha com a palavra ERRO e 11 espaços vazios para alinhar
+      resultadosPrecoFinal.push(["ERRO", "", "", "", "", "", "", "", "", "", "", ""]);
+      continue;
+    }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
+    /*
     var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
-    
+
     // Empurra o resultado encapsulado em um array (exigência do Sheets para colunas)
     resultadosPrecoFinal.push([precoFinal]);
+    */
+    var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
+    
+    // Empurra a matriz de 12 colunas da auditoria
+    resultadosPrecoFinal.push([
+      d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal, 
+      d.fecop, d.pisCofins, d.ipi, d.irpj, d.csll, d.margem
+    ]);
+    
   }
   
   // 7. A Injeção Final em Lote (Batch Write)
   // Coluna M é a 13ª coluna. Vamos injetar os dados a partir da linha 2.
+  /*
   var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 1);
+  rangeSaida.setValues(resultadosPrecoFinal);
+  */
+  
+  // 7. A Injeção Final em Lote (Batch Write)
+  // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
+  var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 12);
   rangeSaida.setValues(resultadosPrecoFinal);
 }
 
