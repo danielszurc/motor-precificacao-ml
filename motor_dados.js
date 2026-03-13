@@ -41,7 +41,8 @@ function carregarBancoDeDados() {
       comprimento: parseFloat(dadosPro[i][8]) || 0,
       largura: parseFloat(dadosPro[i][9]) || 0,
       altura: parseFloat(dadosPro[i][10]) || 0,
-      margemPadrao: parseFloat(dadosPro[i][11]) || 0
+      margemPadrao: parseFloat(dadosPro[i][11]) || 0,
+      ipi: parseFloat(dadosPro[i][12]) || 0
     };
   }
 
@@ -83,7 +84,8 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     cubagemMaster: ((prodMaster.comprimento * prodMaster.largura * prodMaster.altura) / 6000) * qtdNoAnuncio,
     origemICMSArray: [], // Guardará {valorAlvoAbsoluto, destaque, caixa}
     icmsDestaquePonderado: 0,
-    icmsCaixaPonderado: 0
+    icmsCaixaPonderado: 0,
+    ipiPonderado: 0
   };
 
   var regimeFormatado = String(regimeIcmsSaida).trim();
@@ -110,6 +112,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     var impostos = definirImpostos(prodMaster.origemProduto);
     bloco.icmsDestaquePonderado = impostos.destaque;
     bloco.icmsCaixaPonderado = impostos.caixa;
+    bloco.ipiPonderado = prodMaster.ipi;
   } 
   
   // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
@@ -148,16 +151,19 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
 
     var destaqueSinteticoAcumulado = 0;
     var caixaSinteticoAcumulado = 0;
+    var ipiSinteticoAcumulado = 0;
 
     for (var m = 0; m < bloco.origemICMSArray.length; m++) {
       var itemICMS = bloco.origemICMSArray[m];
       var pesoProporcional = itemICMS.valorAlvoAbsoluto / valorAlvoTotalDoBloco;
       destaqueSinteticoAcumulado += (itemICMS.destaque * pesoProporcional);
       caixaSinteticoAcumulado += (itemICMS.caixa * pesoProporcional);
+      ipiSinteticoAcumulado += (itemICMS.ipi * pesoProporcional);
     }
 
     bloco.icmsDestaquePonderado = destaqueSinteticoAcumulado;
     bloco.icmsCaixaPonderado = caixaSinteticoAcumulado;
+    bloco.ipiPonderado = ipiSinteticoAcumulado;
   }
 
   return bloco;
@@ -177,6 +183,10 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
   // --- 1. CARGA TRIBUTÁRIA E DIVISOR (Tese do Século, DIFAL e Lucro Real) ---
   var cargaIcmsDestaque = blocoVirtual.icmsDestaquePonderado;
   var cargaIcmsCaixa = blocoVirtual.icmsCaixaPonderado;
+  var cargaIpiNominal = blocoVirtual.ipiPonderado;
+
+  // CONVERSÃO DO IPI (Por Fora -> Por Dentro)
+  var cargaIpiEfetiva = cargaIpiNominal / (1 + cargaIpiNominal);
 
   // Cálculo do DIFAL: Diferença positiva entre a Carga de Destino e o Destaque da Operação Própria
   var difal = 0;
@@ -204,9 +214,14 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     if (cargaDestinoTotal > 0) {
       difal = Math.max(0, cargaDestinoTotal - cargaIcmsDestaque);
     }
+
+    // A Receita Bruta tributável exclui o valor do IPI destacado na nota
+    var baseReceitaBruta = 1 - cargaIpiEfetiva;
+
     // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
     // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
-    fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
+    // fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
+    fatorFederaisAjustado = config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque) + (config.irpj * baseReceitaBruta) + (config.csll * baseReceitaBruta);
   }
 
   // LÓGICA DO CRÉDITO SOBRE A COMISSÃO (Lucro Real)
@@ -215,7 +230,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     taxaEfetivaML = taxaCategoriaML * (1 - config.pisCofins);
   }
 
-  var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsCaixa + difal + fatorFederaisAjustado);
+  var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsCaixa + difal + fatorFederaisAjustado + cargaIpiEfetiva);
 
   if (divisor <= 0) return "ERRO: Divisor Negativo/Margem Excessiva";
 
