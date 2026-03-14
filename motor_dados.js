@@ -113,6 +113,17 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     bloco.icmsDestaquePonderado = impostos.destaque;
     bloco.icmsCaixaPonderado = impostos.caixa;
     bloco.ipiPonderado = prodMaster.ipi;
+
+    // NOVO: Guarda a identidade da peça para a TGF_VUNCOM
+    // Colocamos o valor alvo como 1, pois ele representa 100% da própria nota
+    bloco.origemICMSArray.push({
+      skuComponente: skuAnunciado,
+      qtdComponente: qtdNoAnuncio,
+      valorAlvoAbsoluto: 1, 
+      destaque: impostos.destaque,
+      caixa: impostos.caixa,
+      ipi: prodMaster.ipi
+    });
   } 
   
   // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
@@ -139,7 +150,19 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
 
       var impostosParte = definirImpostos(dadosComp.origemProduto);
       
+      /*
       bloco.origemICMSArray.push({
+        valorAlvoAbsoluto: custoParte + lucroParte,
+        destaque: impostosParte.destaque,
+        caixa: impostosParte.caixa,
+        ipi: dadosComp.ipi
+      });
+      */
+
+      // NOVO: Guarda a identidade e a quantidade multiplicada para a TGF_VUNCOM
+      bloco.origemICMSArray.push({
+        skuComponente: comp.skuComponente,
+        qtdComponente: comp.qtdComponente * qtdNoAnuncio, // Qtd na receita * Qtd do anúncio
         valorAlvoAbsoluto: custoParte + lucroParte,
         destaque: impostosParte.destaque,
         caixa: impostosParte.caixa,
@@ -479,6 +502,7 @@ function processarPrecificacaoEmMassa() {
   // 3. Prepara um Array vazio para guardar os preços calculados
   // Gravar célula por célula é lento. Vamos guardar tudo aqui e cuspir de uma vez.
   var resultadosPrecoFinal = [];
+  var resultadosVuncom = [];
   
   // 4. O Loop de Orquestração
   for (var i = 0; i < dadosAds.length; i++) {
@@ -543,6 +567,41 @@ function processarPrecificacaoEmMassa() {
       d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal, 
       d.fecop, d.pisCofins, d.ipi, d.irpj, d.csll, d.margem
     ]);
+
+    // --- NOVA LÓGICA: RATEIO E EXPLOSÃO PARA TGF_VUNCOM ---
+    var idAnuncio = linha[0]; // Captura o ID da Coluna A
+    var valorAlvoTotal = 0;
+    
+    // Acha a base total de 100% para fazer a proporção do Kit
+    for (var v = 0; v < bloco.origemICMSArray.length; v++) {
+      valorAlvoTotal += bloco.origemICMSArray[v].valorAlvoAbsoluto;
+    }
+
+    // Explode os componentes gerando as 7 colunas
+    for (var c = 0; c < bloco.origemICMSArray.length; c++) {
+      var comp = bloco.origemICMSArray[c];
+      var proporcao = comp.valorAlvoAbsoluto / valorAlvoTotal;
+      
+      var vlrFreteRateio = d.frete * proporcao;
+      var vlrProdRateio = (d.preco - d.frete) * proporcao;
+      
+      // A MÁGICA DA DEFLAÇÃO: Extraindo o IPI do vProd
+      var vlrProdReal = vlrProdRateio / (1 + comp.ipi);
+      var vlrIpi = vlrProdRateio - vlrProdReal;
+      
+      var vlrUniNfe = vlrProdReal / comp.qtdComponente; // Isolando o unitário
+      
+      resultadosVuncom.push([
+        idAnuncio,            // 1. ID_ANUNCIO
+        skuAnunciado,         // 2. SKU_ANUNCIO
+        comp.skuComponente,   // 3. <cProd>
+        comp.qtdComponente,   // 4. <qCom>
+        vlrUniNfe,            // 5. <vUnCom>
+        vlrProdReal,          // 6. <vProd>
+        vlrFreteRateio,       // 7. <vFrete>
+        vlrIpi                // 8. <vIPI>
+      ]);
+    }
     
   }
   
@@ -557,6 +616,20 @@ function processarPrecificacaoEmMassa() {
   // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
   var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 12);
   rangeSaida.setValues(resultadosPrecoFinal);
+
+  // 8. A INJEÇÃO NA STAGING TABLE (TGF_VUNCOM)
+  var abaVuncom = ss.getSheetByName("TGF_VUNCOM");
+  var ultimaLinhaVuncom = abaVuncom.getLastRow();
+  
+  // Limpa o lixo da rodada anterior (se houver dados da linha 2 em diante)
+  if (ultimaLinhaVuncom > 1) {
+    abaVuncom.getRange(2, 1, ultimaLinhaVuncom - 1, 8).clearContent();
+  }
+  
+  // Injeta a nova explosão de Kits com 7 colunas
+  if (resultadosVuncom.length > 0) {
+    abaVuncom.getRange(2, 1, resultadosVuncom.length, 8).setValues(resultadosVuncom);
+  }
 }
 
 
