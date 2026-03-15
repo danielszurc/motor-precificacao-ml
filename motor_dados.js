@@ -114,17 +114,16 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     bloco.icmsCaixaPonderado = impostos.caixa;
     bloco.ipiPonderado = prodMaster.ipi;
 
-    // NOVO: Guarda a identidade da peça para a TGF_VUNCOM
-    // Colocamos o valor alvo como 1, pois ele representa 100% da própria nota
+    // Guarda a identidade da peça para a TGF_VUNCOM
     bloco.origemICMSArray.push({
       skuComponente: skuAnunciado,
       qtdComponente: qtdNoAnuncio,
-      valorAlvoAbsoluto: 1, 
+      valorAlvoAbsoluto: 1, // Colocamos o valor alvo como 1, pois ele representa 100% da própria nota
       destaque: impostos.destaque,
       caixa: impostos.caixa,
       ipi: prodMaster.ipi
     });
-  } 
+  }
   
   // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
   else if (prodMaster.tipoProduto === "Kit") {
@@ -143,21 +142,12 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       var margemDestaParte = 0;
       if (tipoMargem === "Do anúncio") margemDestaParte = margemCustomizada;
       else if (tipoMargem === "Do kit" && comp.margemKit !== null) margemDestaParte = comp.margemKit;
-      else margemDestaParte = dadosComp.margemPadrao; 
+      else margemDestaParte = dadosComp.margemPadrao;
 
       var lucroParte = custoParte * margemDestaParte;
       lucroAbsolutoTotal += lucroParte;
 
       var impostosParte = definirImpostos(dadosComp.origemProduto);
-      
-      /*
-      bloco.origemICMSArray.push({
-        valorAlvoAbsoluto: custoParte + lucroParte,
-        destaque: impostosParte.destaque,
-        caixa: impostosParte.caixa,
-        ipi: dadosComp.ipi
-      });
-      */
 
       // NOVO: Guarda a identidade e a quantidade multiplicada para a TGF_VUNCOM
       bloco.origemICMSArray.push({
@@ -222,7 +212,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     difal = 0;
     
     // 2. O ICMS próprio já está embutido no DAS, então zeramos o caixa para evitar bitributação
-    cargaIcmsCaixa = 0; 
+    cargaIcmsCaixa = 0;
     
     // 3. Segregação de Receitas (CSOSN)
     var regimeFormatado = String(regimeIcmsSaida).trim();
@@ -401,16 +391,6 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     }
   }
 
-  // --- 6. ZONA MORTA (Fallback de Segurança para preços astronômicos) ---
-  /*
-  if (melhorPreco === 999999) {
-    var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7); // Última coluna (A partir de 200)
-    var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
-    var freteFallbackFinal = freteCheioFallback * (1 - descFallback);
-    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal) / divisor;
-  }
-  */
-
   if (melhorPreco === 999999) {
     var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7);
     var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
@@ -444,7 +424,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     // Desmembrando DIFAL e FECOP para a auditoria
     if ((alqDestino + fecopDestino) > 0) {
       var difalTotalMath = Math.max(0, (alqDestino + fecopDestino) - cargaIcmsDestaque);
-      calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal; 
+      calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal;
       calcDifal = (difalTotalMath * pFinal) - calcFecop;
     }
     var baseBruta = 1 - cargaIpiEfetiva;
@@ -471,8 +451,6 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     csll: calcCsll,
     margem: calcMargem
   };
-
-  // return Math.round(melhorPreco * 100) / 100;
 }
 
 
@@ -523,29 +501,14 @@ function processarPrecificacaoEmMassa() {
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
     var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM"); // Coluna K
     
-    /*
-    // Ignora linhas vazias
-    if (!skuAnunciado) {
-      resultadosPrecoFinal.push([""]); // Empurra uma célula vazia para manter o alinhamento
-      continue;
-    }
-    */
-    
     // Ignora linhas vazias mantendo o alinhamento da matriz (12 colunas)
     if (!skuAnunciado) {
-      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", ""]); 
+      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", ""]);
       continue;
     }
     
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
     var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db);
-    
-    /*
-    if (!bloco) {
-      resultadosPrecoFinal.push(["ERRO: SKU não encontrado"]);
-      continue;
-    }
-    */
 
     if (!bloco) {
       // Se der erro, empurra uma linha com a palavra ERRO e 11 espaços vazios para alinhar
@@ -554,17 +517,11 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    /*
-    var precoFinal = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
-
-    // Empurra o resultado encapsulado em um array (exigência do Sheets para colunas)
-    resultadosPrecoFinal.push([precoFinal]);
-    */
     var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
     
     // Empurra a matriz de 12 colunas da auditoria
     resultadosPrecoFinal.push([
-      d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal, 
+      d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal,
       d.fecop, d.pisCofins, d.ipi, d.irpj, d.csll, d.margem
     ]);
 
@@ -602,15 +559,7 @@ function processarPrecificacaoEmMassa() {
         vlrIpi                // 8. <vIPI>
       ]);
     }
-    
   }
-  
-  // 7. A Injeção Final em Lote (Batch Write)
-  // Coluna M é a 13ª coluna. Vamos injetar os dados a partir da linha 2.
-  /*
-  var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 1);
-  rangeSaida.setValues(resultadosPrecoFinal);
-  */
   
   // 7. A Injeção Final em Lote (Batch Write)
   // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
