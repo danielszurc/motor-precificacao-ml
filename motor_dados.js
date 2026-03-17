@@ -42,7 +42,8 @@ function carregarBancoDeDados() {
       largura: parseFloat(dadosPro[i][9]) || 0,
       altura: parseFloat(dadosPro[i][10]) || 0,
       margemPadrao: parseFloat(dadosPro[i][11]) || 0,
-      ipi: parseFloat(dadosPro[i][12]) || 0
+      ipi: parseFloat(dadosPro[i][12]) || 0,
+      regimeIcmsSaida: dadosPro[i][13] || "Débito"
     };
   }
 
@@ -73,7 +74,7 @@ function carregarBancoDeDados() {
 
 
 // 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
-function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db) {
+function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db) {
   var prodMaster = db.produtos[skuAnunciado];
   if (!prodMaster) return null; // Trava de segurança: SKU não existe na TGFPRO
 
@@ -85,23 +86,29 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     origemICMSArray: [], // Guardará {valorAlvoAbsoluto, destaque, caixa}
     icmsDestaquePonderado: 0,
     icmsCaixaPonderado: 0,
-    ipiPonderado: 0
+    ipiPonderado: 0,
+    simplesNacionalPonderado: 0
   };
 
-  var regimeFormatado = String(regimeIcmsSaida).trim();
-
-  // Função auxiliar para definir Destaque e Caixa baseado na origem e no regime
-  var definirImpostos = function(origem) {
+  // 1. Função auxiliar de ICMS (Agora avalia o regime específico da peça)
+  var definirImpostos = function(origem, regimeProduto) {
     var alqOrigem = (origem === 1 || origem === 2 || origem === 3 || origem === 8) ? 0.04 : 0.12;
     var res = { destaque: 0, caixa: 0 };
+    var regimeFormatado = String(regimeProduto).trim();
     
     if (regimeFormatado === "Débito") {
       res.destaque = alqOrigem; res.caixa = alqOrigem;
     } else if (regimeFormatado === "Estorno") {
-      res.destaque = alqOrigem; res.caixa = 0; // O brilhantismo da Carga Líquida CE
+      res.destaque = alqOrigem; res.caixa = 0; 
     }
-    // Se for "Isento", mantém 0 e 0.
     return res;
+  };
+
+  // 2. Função auxiliar do Simples Nacional (Segregação de Receita por peça)
+  var definirSimples = function(regimeProduto) {
+    var regimeFormatado = String(regimeProduto).trim();
+    if (regimeFormatado === "Débito") return db.config.cargaSnNormal;
+    return db.config.cargaSnSt; // "Estorno" ou "Isento" tem dedução
   };
 
   // 2.1. CÁLCULO SE FOR PRODUTO SIMPLES
@@ -109,10 +116,11 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     bloco.custoTotal = prodMaster.custoAquisicao * qtdNoAnuncio;
     bloco.margemPonderada = (tipoMargem === "Do anúncio") ? margemCustomizada : prodMaster.margemPadrao;
     
-    var impostos = definirImpostos(prodMaster.origemProduto);
+    var impostos = definirImpostos(prodMaster.origemProduto, prodMaster.regimeIcmsSaida);
     bloco.icmsDestaquePonderado = impostos.destaque;
     bloco.icmsCaixaPonderado = impostos.caixa;
     bloco.ipiPonderado = prodMaster.ipi;
+    bloco.simplesNacionalPonderado = definirSimples(prodMaster.regimeIcmsSaida);
 
     // Guarda a identidade da peça para a TGF_VUNCOM
     bloco.origemICMSArray.push({
@@ -147,7 +155,9 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       var lucroParte = custoParte * margemDestaParte;
       lucroAbsolutoTotal += lucroParte;
 
-      var impostosParte = definirImpostos(dadosComp.origemProduto);
+      // Chama a função passando a origem e o regime DAQUELA PEÇA ESPECÍFICA
+      var impostosParte = definirImpostos(dadosComp.origemProduto, dadosComp.regimeIcmsSaida);
+      var simplesParte = definirSimples(dadosComp.regimeIcmsSaida);
 
       // NOVO: Guarda a identidade e a quantidade multiplicada para a TGF_VUNCOM
       bloco.origemICMSArray.push({
@@ -156,7 +166,8 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
         valorAlvoAbsoluto: custoParte + lucroParte,
         destaque: impostosParte.destaque,
         caixa: impostosParte.caixa,
-        ipi: dadosComp.ipi
+        ipi: dadosComp.ipi,
+        simplesNacional: simplesParte
       });
     }
 
@@ -166,18 +177,22 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     var destaqueSinteticoAcumulado = 0;
     var caixaSinteticoAcumulado = 0;
     var ipiSinteticoAcumulado = 0;
+    var simplesSinteticoAcumulado = 0;
 
     for (var m = 0; m < bloco.origemICMSArray.length; m++) {
       var itemICMS = bloco.origemICMSArray[m];
       var pesoProporcional = itemICMS.valorAlvoAbsoluto / valorAlvoTotalDoBloco;
+
       destaqueSinteticoAcumulado += (itemICMS.destaque * pesoProporcional);
       caixaSinteticoAcumulado += (itemICMS.caixa * pesoProporcional);
       ipiSinteticoAcumulado += (itemICMS.ipi * pesoProporcional);
+      simplesSinteticoAcumulado += (itemICMS.simplesNacional * pesoProporcional); // O DAS Ponderado!
     }
 
     bloco.icmsDestaquePonderado = destaqueSinteticoAcumulado;
     bloco.icmsCaixaPonderado = caixaSinteticoAcumulado;
     bloco.ipiPonderado = ipiSinteticoAcumulado;
+    bloco.simplesNacionalPonderado = simplesSinteticoAcumulado; // Guarda o DAS final do Kit
   }
 
   return bloco;
@@ -191,7 +206,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
  * de envio do ML (Peso x Preço x Reputação) e encontrar o Preço de Venda Final.
  */
 
-function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79, alqDestino, fecopDestino, regimeIcmsSaida) {
+function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapidoSub79, alqDestino, fecopDestino) {
   if (!blocoVirtual) return "ERRO: Bloco Vazio";
 
   // --- 1. CARGA TRIBUTÁRIA E DIVISOR (Tese do Século, DIFAL e Lucro Real) ---
@@ -473,7 +488,6 @@ function processarPrecificacaoEmMassa() {
   var ultimaLinha = abaAds.getLastRow();
   if (ultimaLinha < 2) return; // Se só tiver cabeçalho, aborta.
   
-  // getRange(linhaInicial, colunaInicial, qtdLinhas, qtdColunas)
   var rangeAds = abaAds.getRange(2, 1, ultimaLinha - 1, abaAds.getLastColumn());
   var dadosAds = rangeAds.getValues();
   
@@ -496,10 +510,9 @@ function processarPrecificacaoEmMassa() {
     // VARIÁVEIS FISCAIS E TÁTICAS
     var alqDestino = parseFloat(linha[7]) || 0;                             // Coluna H
     var fecopDestino = parseFloat(linha[8]) || 0;                           // Coluna I
-    var regimeIcmsSaida = linha[9] || "Débito";                             // Coluna J (Fallback de segurança)
 
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
-    var forcarFreteRapido = (String(linha[10]).trim().toUpperCase() === "SIM"); // Coluna K
+    var forcarFreteRapido = (String(linha[9]).trim().toUpperCase() === "SIM"); // Coluna J
     
     // Ignora linhas vazias mantendo o alinhamento da matriz (12 colunas)
     if (!skuAnunciado) {
@@ -508,7 +521,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
-    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, regimeIcmsSaida, db);
+    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db);
 
     if (!bloco) {
       // Se der erro, empurra uma linha com a palavra ERRO e 11 espaços vazios para alinhar
@@ -517,7 +530,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino, regimeIcmsSaida);
+    var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
     
     // Empurra a matriz de 12 colunas da auditoria
     resultadosPrecoFinal.push([
