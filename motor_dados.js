@@ -448,7 +448,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
       calcDifal = (difalTotalMath * pFinal) - calcFecop;
     }
     var baseBruta = 1 - cargaIpiEfetiva;
-    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque));
+    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque - difal));
     calcIrpj = pFinal * (config.irpj * baseBruta);
     calcCsll = pFinal * (config.csll * baseBruta);
   }
