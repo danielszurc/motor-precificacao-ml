@@ -266,7 +266,25 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
   var divisor = 1 - (taxaEfetivaML + blocoVirtual.margemPonderada + cargaIcmsCaixa + difal + fatorFederaisAjustado + cargaIpiEfetiva);
 
-  if (divisor <= 0) return "ERRO: Divisor Negativo/Margem Excessiva";
+  // --- 1. CARGA TRIBUTÁRIA E DIVISOR ---
+  // ... [cálculos de impostos, difal e Tese do Século] ...
+
+  var somaCustosVariaveis = taxaEfetivaML + cargaIcmsCaixa + difal + fatorFederaisAjustado + cargaIpiEfetiva;
+  var divisor = 1 - (somaCustosVariaveis + blocoVirtual.margemPonderada);
+
+  // A NOVA TRAVA DE API (HTTP 400 - Bad Request)
+  if (divisor <= 0) {
+    var margemMaxTeorica = 1 - somaCustosVariaveis; // O limite da física tributária
+    
+    // Formatação para exibição amigável
+    var maxStr = (margemMaxTeorica * 100).toFixed(2) + "%";
+    var divStr = (divisor * 100).toFixed(2) + "%";
+    
+    return {
+      sucesso: false,
+      feedback: "400: Margem inviável. A soma de impostos e taxas já consome " + (somaCustosVariaveis * 100).toFixed(2) + "% do preço. Margem máxima teórica: " + maxStr + ". Divisor atual: " + divStr
+    };
+  }
 
   // --- 2. CONFIGURAÇÃO DAS FAIXAS DE PREÇO E COLUNAS DA MATRIZ ---
   // A propriedade 'col' indica qual coluna da Tabela Cheia o algoritmo deve ler
@@ -458,6 +476,8 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
   // Devolve o Objeto Completo!
   return {
+    sucesso: true,
+    feedback: "200: Cálculo realizado com sucesso.",
     preco: pFinal,
     custo: blocoVirtual.custoTotal,
     comissao: calcComissao,
@@ -519,9 +539,9 @@ function processarPrecificacaoEmMassa() {
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
     var forcarFreteRapido = (String(linha[9]).trim().toUpperCase() === "SIM"); // Coluna J
     
-    // Ignora linhas vazias mantendo o alinhamento da matriz (12 colunas)
+    // Ignora linhas vazias mantendo o alinhamento de 13 colunas
     if (!skuAnunciado) {
-      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", ""]);
+      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", ""]);
       continue;
     }
     
@@ -529,18 +549,24 @@ function processarPrecificacaoEmMassa() {
     var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db);
 
     if (!bloco) {
-      // Se der erro, empurra uma linha com a palavra ERRO e 11 espaços vazios para alinhar
-      resultadosPrecoFinal.push(["ERRO", "", "", "", "", "", "", "", "", "", "", ""]);
+      // HTTP 404 - Not Found
+      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", "404: SKU componente não encontrado no catálogo (TGFPRO)."]);
       continue;
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
     var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
     
-    // Empurra a matriz de 12 colunas da auditoria
+    if (!d.sucesso) {
+      // Falhou no motor (ex: Margem de 100%). Imprime colunas vazias e o erro na coluna Y
+      resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", d.feedback]);
+      continue; // Pula a explosão da TGF_VUNCOM (Isso limpa os erros #NUM!)
+    }
+    
+    // Sucesso! Empurra a matriz de 13 colunas da auditoria
     resultadosPrecoFinal.push([
       d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal,
-      d.fecop, d.pisCofins, d.ipi, d.irpj, d.csll, d.margem
+      d.fecop, d.pisCofins, d.ipi, d.irpj, d.csll, d.margem, d.feedback
     ]);
 
     // --- NOVA LÓGICA: RATEIO E EXPLOSÃO PARA TGF_VUNCOM ---
@@ -581,7 +607,7 @@ function processarPrecificacaoEmMassa() {
   
   // 7. A Injeção Final em Lote (Batch Write)
   // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
-  var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 12);
+  var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 13);
   rangeSaida.setValues(resultadosPrecoFinal);
 
   // 8. A INJEÇÃO NA STAGING TABLE (TGF_VUNCOM)
