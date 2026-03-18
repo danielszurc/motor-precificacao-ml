@@ -43,7 +43,8 @@ function carregarBancoDeDados() {
       altura: parseFloat(dadosPro[i][10]) || 0,
       margemPadrao: parseFloat(dadosPro[i][11]) || 0,
       ipi: parseFloat(dadosPro[i][12]) || 0,
-      regimeIcmsSaida: dadosPro[i][13] || "Débito"
+      regimeIcmsSaida: dadosPro[i][13] || "Débito",
+      redBcIcms: parseFloat(dadosPro[i][14]) || 0
     };
   }
 
@@ -91,15 +92,19 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
   };
 
   // 1. Função auxiliar de ICMS (Agora avalia o regime específico da peça)
-  var definirImpostos = function(origem, regimeProduto) {
-    var alqOrigem = (origem === 1 || origem === 2 || origem === 3 || origem === 8) ? 0.04 : 0.12;
+  var definirImpostos = function(origem, regimeProduto, percReducaoBC) {
+    var alqOrigemNominal = (origem === 1 || origem === 2 || origem === 3 || origem === 8) ? 0.04 : 0.12;
+
+    // A MATEMÁTICA DA CARGA EFETIVA
+    var alqEfetiva = alqOrigemNominal * (1 - percReducaoBC);
+    
     var res = { destaque: 0, caixa: 0 };
     var regimeFormatado = String(regimeProduto).trim();
     
     if (regimeFormatado === "Débito") {
-      res.destaque = alqOrigem; res.caixa = alqOrigem;
+      res.destaque = alqEfetiva; res.caixa = alqEfetiva;
     } else if (regimeFormatado === "Estorno") {
-      res.destaque = alqOrigem; res.caixa = 0; 
+      res.destaque = alqEfetiva; res.caixa = 0; 
     }
     return res;
   };
@@ -116,7 +121,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     bloco.custoTotal = prodMaster.custoAquisicao * qtdNoAnuncio;
     bloco.margemPonderada = (tipoMargem === "Do anúncio") ? margemCustomizada : prodMaster.margemPadrao;
     
-    var impostos = definirImpostos(prodMaster.origemProduto, prodMaster.regimeIcmsSaida);
+    var impostos = definirImpostos(prodMaster.origemProduto, prodMaster.regimeIcmsSaida, prodMaster.redBcIcms);
     bloco.icmsDestaquePonderado = impostos.destaque;
     bloco.icmsCaixaPonderado = impostos.caixa;
     bloco.ipiPonderado = prodMaster.ipi;
@@ -156,7 +161,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       lucroAbsolutoTotal += lucroParte;
 
       // Chama a função passando a origem e o regime DAQUELA PEÇA ESPECÍFICA
-      var impostosParte = definirImpostos(dadosComp.origemProduto, dadosComp.regimeIcmsSaida);
+      var impostosParte = definirImpostos(dadosComp.origemProduto, dadosComp.regimeIcmsSaida, dadosComp.redBcIcms);
       var simplesParte = definirSimples(dadosComp.regimeIcmsSaida);
 
       // NOVO: Guarda a identidade e a quantidade multiplicada para a TGF_VUNCOM
@@ -250,7 +255,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
     // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
     // fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
-    fatorFederaisAjustado = config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque) + (config.irpj * baseReceitaBruta) + (config.csll * baseReceitaBruta);
+    fatorFederaisAjustado = config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque - difal) + (config.irpj * baseReceitaBruta) + (config.csll * baseReceitaBruta);
   }
 
   // LÓGICA DO CRÉDITO SOBRE A COMISSÃO (Lucro Real)
