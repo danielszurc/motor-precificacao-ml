@@ -598,31 +598,3 @@ function processarPrecificacaoEmMassa() {
     abaVuncom.getRange(2, 1, resultadosVuncom.length, 8).setValues(resultadosVuncom);
   }
 }
-
-
-
-/**
- * MÓDULO 4: INTERFACE DE USUÁRIO (UI)
- * Responsabilidade: Criar o menu nativo no Google Sheets para o operador.
- */
-
-function onOpen() {
-  var ui = SpreadsheetApp.getUi();
-  
-  // Cria o menu principal com o nome da sua consultoria
-  ui.createMenu('360 Gestão')
-    .addItem('⚡ Recalcular Preços', 'processarPrecificacaoEmMassa')
-    .addSeparator() // Linha divisória visual
-    .addItem('ℹ️ Sobre o Motor', 'exibirSobre')
-    .addToUi();
-}
-
-// Função auxiliar apenas para dar um feedback no botão 'Sobre'
-function exibirSobre() {
-  var ui = SpreadsheetApp.getUi();
-  ui.alert(
-    'Motor de Precificação Dinâmica',
-    'Versão 2.0 (Top-Down / Bloco Virtual)\nDesenvolvido para operações de alta performance no Mercado Livre.',
-    ui.ButtonSet.OK
-  );
-}

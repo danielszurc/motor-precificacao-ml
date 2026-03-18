@@ -1,26 +1,44 @@
 /**
- * INTEGRAÇÃO 360 GESTÃO IND & AUT
- * Este script é apenas um gatilho para a biblioteca central.
+ * FRONT-END: INTEGRAÇÃO 360 GESTÃO IND & AUT
+ * Responsabilidade: Desenhar a interface do usuário (Menu) e 
+ * delegar os comandos para o motor central (Biblioteca Motor360).
  */
 
+// =========================================================
+// 1. INTERFACE DE USUÁRIO (MENU)
+// =========================================================
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
+  
   ui.createMenu('360 Gestão')
     .addItem('⚡ Recalcular Preços', 'acionarMotorRemoto')
+    .addSeparator() 
+    .addItem('ℹ️ Sobre o Motor', 'exibirSobre')
     .addToUi();
 }
 
+function exibirSobre() {
+  var ui = SpreadsheetApp.getUi();
+  ui.alert(
+    'Motor de Precificação Dinâmica',
+    'Versão 2.1 (SaaS Edition)\nArquitetura Fiscal Top-Down com Deflação de IPI e Tese do Século.\nDesenvolvido pela 360 Gestão Ind & Aut.',
+    ui.ButtonSet.OK
+  );
+}
+
+// =========================================================
+// 2. GATILHOS DE EXECUÇÃO (DELEGATORS)
+// =========================================================
+
 // Função casca que chama a biblioteca invisível
 function acionarMotorRemoto() {
-  // Motor360 é o identificador que você deu no Passo 3
+  // O Motor360 é a nossa biblioteca importada
   Motor360.processarPrecificacaoEmMassa();
 }
 
-// Esta função escuta a edição local e joga o "pacote de dados" (e) para o motor.
+// A Ponte de Eventos para a Trava Fiscal
 function onEdit(e) {
-  // Verificação de segurança primária
   if (!e) return;
-  
-  // Despacha o evento diretamente para a função onEdit que está dentro do Motor360
+  // Despacha a edição para o policial fiscal no back-end
   Motor360.onEdit(e);
 }
