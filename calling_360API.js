@@ -15,3 +15,12 @@ function acionarMotorRemoto() {
   // Motor360 é o identificador que você deu no Passo 3
   Motor360.processarPrecificacaoEmMassa();
 }
+
+// Esta função escuta a edição local e joga o "pacote de dados" (e) para o motor.
+function onEdit(e) {
+  // Verificação de segurança primária
+  if (!e) return;
+  
+  // Despacha o evento diretamente para a função onEdit que está dentro do Motor360
+  Motor360.onEdit(e);
+}
