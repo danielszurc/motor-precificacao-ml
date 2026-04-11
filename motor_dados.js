@@ -523,7 +523,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
  * (Regras de Março/2026) e devolver a DRE compatível com o Módulo 3.
  */
 
-function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCampanhaExtra = 0, penalidadeCPF = 0) {
+function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCampanhaExtra = 0) {
   if (!blocoVirtual) return { sucesso: false, feedback: "400: Bloco Virtual Vazio" };
 
   // --- 1. CARGA TRIBUTÁRIA (A Tese do Século é universal) ---
@@ -581,7 +581,7 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
       // Isso significa que ela entra no divisor, achatando-o absurdamente.
       var divisorMicro = divisorTier - 0.50;
       if (divisorMicro > 0) {
-        precoCalculado = (blocoVirtual.custoTotal + penalidadeCPF) / divisorMicro;
+        precoCalculado = (blocoVirtual.custoTotal) / divisorMicro;
         taxaFixaDestaFaixa = precoCalculado * 0.50;
       } else {
         precoCalculado = 999999; // Margem inviável
@@ -589,7 +589,7 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
     } else {
       // REGRA PADRÃO DOS DEGRAUS
       taxaFixaDestaFaixa = tier.taxaFixa;
-      precoCalculado = (blocoVirtual.custoTotal + taxaFixaDestaFaixa + penalidadeCPF) / divisorTier;
+      precoCalculado = (blocoVirtual.custoTotal + taxaFixaDestaFaixa) / divisorTier;
     }
 
     // Blindagem Decimal
@@ -618,7 +618,7 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
   var pFinal = Math.round(melhorPreco * 100) / 100;
   
   // Custo de Plataforma desmembrado (Comissão % + Taxa Fixa R$ + Penalidades)
-  var calcComissaoTotal = (pFinal * comissaoPercentualFinal) + taxaFixaAplicada + penalidadeCPF;
+  var calcComissaoTotal = (pFinal * comissaoPercentualFinal) + taxaFixaAplicada;
   
   var calcIcmsCaixa = pFinal * cargaIcmsCaixa;
   var calcIpi = pFinal * cargaIpiEfetiva;
@@ -642,7 +642,7 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
   // Na DRE, alocaremos a Comissão % na coluna 'Comissão' (Coluna O) e a Taxa Fixa na coluna 'Frete/Envios' (Coluna P)
   // para manter a simetria com a estrutura atual da planilha.
   var valorComissaoPura = pFinal * comissaoPercentualFinal;
-  var valorCustosFixosPlataforma = taxaFixaAplicada + penalidadeCPF;
+  var valorCustosFixosPlataforma = taxaFixaAplicada;
 
   var calcMargem = pFinal - blocoVirtual.custoTotal - valorComissaoPura - valorCustosFixosPlataforma - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
 
@@ -711,6 +711,10 @@ function processarPrecificacaoEmMassa() {
 
     // Captura do canal de venda
     var canalVenda = String(linha[10]).trim();  // Coluna K
+
+    // Captura a coluna L (Índice 11) e já converte para o percentual matemático
+    var flagCampanha = String(linha[11]).trim().toUpperCase();
+    var taxaCampanhaShopee = (flagCampanha === "SIM") ? 0.025 : 0;
     
     // Ignora linhas vazias mantendo o alinhamento de 13 colunas
     if (!skuAnunciado) {
@@ -736,7 +740,7 @@ function processarPrecificacaoEmMassa() {
     if (canalVenda === "Shopee") {
       // Como o Módulo 2B ainda não foi escrito, disparamos um HTTP 501 (Not Implemented)
       // Passamos 0 e 0 para Campanha e Penalidade CPF por enquanto
-      d = calcularPrecoSHP(bloco, db.config, alqDestino, fecopDestino, 0, 0);
+      d = calcularPrecoSHP(bloco, db.config, alqDestino, fecopDestino, taxaCampanhaShopee);
     } else {
       // Fallback de segurança e padrão: Mercado Livre
       d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
@@ -793,7 +797,7 @@ function processarPrecificacaoEmMassa() {
   
   // 7. A Injeção Final em Lote (Batch Write)
   // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
-  var rangeSaida = abaAds.getRange(2, 13, resultadosPrecoFinal.length, 13);
+  var rangeSaida = abaAds.getRange(2, 14, resultadosPrecoFinal.length, 13);
   rangeSaida.setValues(resultadosPrecoFinal);
 
   // 8. A INJEÇÃO NA STAGING TABLE (TGF_VUNCOM)
