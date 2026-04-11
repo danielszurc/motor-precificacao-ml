@@ -41,10 +41,12 @@ function carregarBancoDeDados() {
       comprimento: parseFloat(dadosPro[i][8]) || 0,
       largura: parseFloat(dadosPro[i][9]) || 0,
       altura: parseFloat(dadosPro[i][10]) || 0,
-      margemPadrao: parseFloat(dadosPro[i][11]) || 0,
-      ipi: parseFloat(dadosPro[i][12]) || 0,
-      regimeIcmsSaida: dadosPro[i][13] || "Débito",
-      redBcIcms: parseFloat(dadosPro[i][14]) || 0
+
+      margemML: parseFloat(dadosPro[i][11]) || 0,
+      margemSHP: parseFloat(dadosPro[i][12]) || 0,
+      ipi: parseFloat(dadosPro[i][13]) || 0,
+      regimeIcmsSaida: dadosPro[i][14] || "Débito",
+      redBcIcms: parseFloat(dadosPro[i][15]) || 0
     };
   }
 
@@ -65,7 +67,8 @@ function carregarBancoDeDados() {
     mapKit[skuKit].push({
       skuComponente: dadosKit[j][1],
       qtdComponente: parseFloat(dadosKit[j][2]) || 1,
-      margemKit: dadosKit[j][3] !== "" ? parseFloat(dadosKit[j][3]) : null // Pode ser nula se não houver tática
+      margemKitML: dadosKit[j][3] !== "" ? parseFloat(dadosKit[j][3]) : null,
+      margemKitSHP: dadosKit[j][4] !== "" ? parseFloat(dadosKit[j][4]) : null
     });
   }
 
@@ -75,7 +78,7 @@ function carregarBancoDeDados() {
 
 
 // 2. O ENGENHEIRO DO BLOCO VIRTUAL (Aglutinador Top-Down)
-function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db) {
+function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, canalRequisitado, db) {
   var prodMaster = db.produtos[skuAnunciado];
   if (!prodMaster) return null; // Trava de segurança: SKU não existe na TGFPRO
 
@@ -119,7 +122,13 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
   // 2.1. CÁLCULO SE FOR PRODUTO SIMPLES
   if (prodMaster.tipoProduto === "Simples") {
     bloco.custoTotal = prodMaster.custoAquisicao * qtdNoAnuncio;
-    bloco.margemPonderada = (tipoMargem === "Do anúncio") ? margemCustomizada : prodMaster.margemPadrao;
+
+    if (tipoMargem === "Do anúncio") {
+      bloco.margemPonderada = margemCustomizada;
+    } else {
+      // Se não for do anúncio, puxa a padrão atrelada ao canal
+      bloco.margemPonderada = (canalRequisitado === "Shopee") ? prodMaster.margemSHP : prodMaster.margemML;
+    }
     
     var impostos = definirImpostos(prodMaster.origemProduto, prodMaster.regimeIcmsSaida, prodMaster.redBcIcms);
     bloco.icmsDestaquePonderado = impostos.destaque;
@@ -153,9 +162,24 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       bloco.custoTotal += custoParte;
 
       var margemDestaParte = 0;
-      if (tipoMargem === "Do anúncio") margemDestaParte = margemCustomizada;
-      else if (tipoMargem === "Do kit" && comp.margemKit !== null) margemDestaParte = comp.margemKit;
-      else margemDestaParte = dadosComp.margemPadrao;
+
+      if (tipoMargem === "Do anúncio") {
+        margemDestaParte = margemCustomizada;
+      }
+      else if (tipoMargem === "Do kit") {
+        if (canalRequisitado === "Shopee" && comp.margemKitSHP !== null) {
+          margemDestaParte = comp.margemKitSHP;
+        } else if (canalRequisitado !== "Shopee" && comp.margemKitML !== null) {
+          margemDestaParte = comp.margemKitML;
+        } else {
+          // Fallback de segurança: Se pediu do kit, mas a célula está vazia, puxa da TGFPRO
+          margemDestaParte = (canalRequisitado === "Shopee") ? dadosComp.margemSHP : dadosComp.margemML;
+        }
+      }
+      else {
+        // Tática "Do produto": puxa direto da TGFPRO respeitando o canal
+        margemDestaParte = (canalRequisitado === "Shopee") ? dadosComp.margemSHP : dadosComp.margemML;
+      }
 
       var lucroParte = custoParte * margemDestaParte;
       lucroAbsolutoTotal += lucroParte;
@@ -493,6 +517,152 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
   };
 }
 
+/**
+ * MÓDULO 2B: O MOTOR FINANCEIRO DA SHOPEE
+ * Responsabilidade: Aplicar a carga tributária, resolver o paradoxo das taxas fixas escalonáveis
+ * (Regras de Março/2026) e devolver a DRE compatível com o Módulo 3.
+ */
+
+function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCampanhaExtra = 0, penalidadeCPF = 0) {
+  if (!blocoVirtual) return { sucesso: false, feedback: "400: Bloco Virtual Vazio" };
+
+  // --- 1. CARGA TRIBUTÁRIA (A Tese do Século é universal) ---
+  var cargaIcmsDestaque = blocoVirtual.icmsDestaquePonderado;
+  var cargaIcmsCaixa = blocoVirtual.icmsCaixaPonderado;
+  var cargaIpiNominal = blocoVirtual.ipiPonderado;
+  var cargaIpiEfetiva = cargaIpiNominal / (1 + cargaIpiNominal);
+
+  var difal = 0;
+  var fatorFederaisAjustado = 0;
+
+  if (config.regimeTributario === "Simples Nacional") {
+    difal = 0;
+    cargaIcmsCaixa = 0;
+    fatorFederaisAjustado = blocoVirtual.simplesNacionalPonderado;
+  } else {
+    var cargaDestinoTotal = alqDestino + fecopDestino;
+    if (cargaDestinoTotal > 0) {
+      difal = Math.max(0, cargaDestinoTotal - cargaIcmsDestaque);
+    }
+    var baseReceitaBruta = 1 - cargaIpiEfetiva;
+    fatorFederaisAjustado = config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque - difal) + (config.irpj * baseReceitaBruta) + (config.csll * baseReceitaBruta);
+  }
+
+  var somaImpostosEMargem = cargaIcmsCaixa + difal + fatorFederaisAjustado + cargaIpiEfetiva + blocoVirtual.margemPonderada;
+
+  // --- 2. O SOLVER DE TIERS DA SHOPEE (Regras Março/2026) ---
+  var faixasShopee = [
+    { min: 0.01,   max: 7.99,   comissaoBase: 0.20, taxaFixa: "50%" }, // Regra de micro-valor
+    { min: 8.00,   max: 79.99,  comissaoBase: 0.20, taxaFixa: 4.00 },
+    { min: 80.00,  max: 99.99,  comissaoBase: 0.14, taxaFixa: 16.00 },
+    { min: 100.00, max: 199.99, comissaoBase: 0.14, taxaFixa: 20.00 },
+    { min: 200.00, max: 999999, comissaoBase: 0.14, taxaFixa: 26.00 }
+  ];
+
+  var melhorPreco = 999999;
+  var comissaoAplicada = 0;
+  var taxaFixaAplicada = 0;
+  var comissaoPercentualFinal = 0;
+
+  for (var i = 0; i < faixasShopee.length; i++) {
+    var tier = faixasShopee[i];
+    var comissaoTotalTier = tier.comissaoBase + taxaCampanhaExtra; // Ex: 20% + 2.5% = 22.5%
+    var divisorTier = 1 - (somaImpostosEMargem + comissaoTotalTier);
+    
+    // Trava de física tributária para esta faixa específica
+    if (divisorTier <= 0) continue; 
+
+    var precoCalculado = 0;
+    var taxaFixaDestaFaixa = 0;
+
+    // A Álgebra do Preço
+    if (tier.taxaFixa === "50%") {
+      // REGRA DE MICRO-VALOR: A taxa fixa é 50% do próprio preço. 
+      // Isso significa que ela entra no divisor, achatando-o absurdamente.
+      var divisorMicro = divisorTier - 0.50;
+      if (divisorMicro > 0) {
+        precoCalculado = (blocoVirtual.custoTotal + penalidadeCPF) / divisorMicro;
+        taxaFixaDestaFaixa = precoCalculado * 0.50;
+      } else {
+        precoCalculado = 999999; // Margem inviável
+      }
+    } else {
+      // REGRA PADRÃO DOS DEGRAUS
+      taxaFixaDestaFaixa = tier.taxaFixa;
+      precoCalculado = (blocoVirtual.custoTotal + taxaFixaDestaFaixa + penalidadeCPF) / divisorTier;
+    }
+
+    // Blindagem Decimal
+    var precoArredondado = Math.round(precoCalculado * 100) / 100;
+
+    // Se o preço calculado "couber" matematicamente dentro da faixa que ditou a regra, achamos o candidato!
+    if (precoArredondado >= tier.min && precoArredondado <= tier.max) {
+      if (precoCalculado < melhorPreco) {
+        melhorPreco = precoCalculado;
+        comissaoPercentualFinal = comissaoTotalTier;
+        taxaFixaAplicada = taxaFixaDestaFaixa;
+      }
+    }
+  }
+
+  // Se o loop terminou e o preço continua 999999, significa que o produto caiu no "Vale da Morte"
+  // ou a margem exigida estourou a física de todas as faixas.
+  if (melhorPreco === 999999) {
+    return {
+      sucesso: false,
+      feedback: "400: Margem inviável ou produto preso em Zona Morta (saltos da taxa fixa impossibilitam o preço)."
+    };
+  }
+
+  // --- 3. MONTAGEM DA AUDITORIA FISCAL (DRE DA SHOPEE) ---
+  var pFinal = Math.round(melhorPreco * 100) / 100;
+  
+  // Custo de Plataforma desmembrado (Comissão % + Taxa Fixa R$ + Penalidades)
+  var calcComissaoTotal = (pFinal * comissaoPercentualFinal) + taxaFixaAplicada + penalidadeCPF;
+  
+  var calcIcmsCaixa = pFinal * cargaIcmsCaixa;
+  var calcIpi = pFinal * cargaIpiEfetiva;
+  
+  var calcDifal = 0; var calcFecop = 0; var calcPisCofins = 0; var calcIrpj = 0; var calcCsll = 0;
+
+  if (config.regimeTributario === "Simples Nacional") {
+    calcPisCofins = pFinal * fatorFederaisAjustado;
+  } else {
+    if ((alqDestino + fecopDestino) > 0) {
+      var difalTotalMath = Math.max(0, (alqDestino + fecopDestino) - cargaIcmsDestaque);
+      calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal;
+      calcDifal = (difalTotalMath * pFinal) - calcFecop;
+    }
+    var baseBruta = 1 - cargaIpiEfetiva;
+    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque - difal));
+    calcIrpj = pFinal * (config.irpj * baseBruta);
+    calcCsll = pFinal * (config.csll * baseBruta);
+  }
+
+  // Na DRE, alocaremos a Comissão % na coluna 'Comissão' (Coluna O) e a Taxa Fixa na coluna 'Frete/Envios' (Coluna P)
+  // para manter a simetria com a estrutura atual da planilha.
+  var valorComissaoPura = pFinal * comissaoPercentualFinal;
+  var valorCustosFixosPlataforma = taxaFixaAplicada + penalidadeCPF;
+
+  var calcMargem = pFinal - blocoVirtual.custoTotal - valorComissaoPura - valorCustosFixosPlataforma - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
+
+  return {
+    sucesso: true,
+    feedback: "200: Cálculo Shopee realizado com sucesso.",
+    preco: pFinal,
+    custo: blocoVirtual.custoTotal,
+    comissao: valorComissaoPura,
+    frete: valorCustosFixosPlataforma, 
+    icms: calcIcmsCaixa,
+    difal: calcDifal,
+    fecop: calcFecop,
+    pisCofins: calcPisCofins,
+    ipi: calcIpi,
+    irpj: calcIrpj,
+    csll: calcCsll,
+    margem: calcMargem
+  };
+}
 
 
 /**
@@ -533,11 +703,14 @@ function processarPrecificacaoEmMassa() {
     var margemCustomizada = parseFloat(linha[6]) || 0;  // Coluna G
 
     // VARIÁVEIS FISCAIS E TÁTICAS
-    var alqDestino = parseFloat(linha[7]) || 0;                             // Coluna H
-    var fecopDestino = parseFloat(linha[8]) || 0;                           // Coluna I
+    var alqDestino = parseFloat(linha[7]) || 0;     // Coluna H
+    var fecopDestino = parseFloat(linha[8]) || 0;   // Coluna I
 
     // Força Frete Grátis Rápido mesmo se o preço do anúncio for menor do que R$79
     var forcarFreteRapido = (String(linha[9]).trim().toUpperCase() === "SIM"); // Coluna J
+
+    // Captura do canal de venda
+    var canalVenda = String(linha[10]).trim();  // Coluna K
     
     // Ignora linhas vazias mantendo o alinhamento de 13 colunas
     if (!skuAnunciado) {
@@ -546,7 +719,7 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
-    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, db);
+    var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, canalVenda, db);
 
     if (!bloco) {
       // HTTP 404 - Not Found
@@ -555,8 +728,21 @@ function processarPrecificacaoEmMassa() {
     }
     
     // 6. Aciona o Motor Financeiro (Módulo 2)
-    var d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
+    // ----------------------------------------------------------------
+    // O ROTEADOR OMNICHANNEL (A Chave de Trilhos)
+    // ----------------------------------------------------------------
+    var d; // Variável que receberá o objeto de resposta, independente do canal
     
+    if (canalVenda === "Shopee") {
+      // Como o Módulo 2B ainda não foi escrito, disparamos um HTTP 501 (Not Implemented)
+      // Passamos 0 e 0 para Campanha e Penalidade CPF por enquanto
+      d = calcularPrecoSHP(bloco, db.config, alqDestino, fecopDestino, 0, 0);
+    } else {
+      // Fallback de segurança e padrão: Mercado Livre
+      d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
+    }
+    
+    // TRAVA DE SUCESSO E INJEÇÃO NA DRE
     if (!d.sucesso) {
       // Falhou no motor (ex: Margem de 100%). Imprime colunas vazias e o erro na coluna Y
       resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", d.feedback]);
