@@ -96,7 +96,8 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
 
   // 1. Função auxiliar de ICMS (Agora avalia o regime específico da peça)
   var definirImpostos = function(origem, regimeProduto, percReducaoBC) {
-    var alqOrigemNominal = (origem === 1 || origem === 2 || origem === 3 || origem === 8) ? 0.04 : 0.12;
+    var origemNum = Number(origem);
+    var alqOrigemNominal = (origemNum === 1 || origemNum === 2 || origemNum === 3 || origemNum === 8) ? 0.04 : 0.12;
 
     // A MATEMÁTICA DA CARGA EFETIVA
     var alqEfetiva = alqOrigemNominal * (1 - percReducaoBC);
