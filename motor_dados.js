@@ -7,7 +7,7 @@
 // 1. CARREGAMENTO DO BANCO DE DADOS PARA A MEMÓRIA
 function carregarBancoDeDados() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  
+
   // 1.1. Lendo as Configurações Globais (Aba 0)
   var abaConfig = ss.getSheetByName("CONFIG_SELLER");
   var dadosConfig = abaConfig.getDataRange().getValues();
@@ -28,11 +28,11 @@ function carregarBancoDeDados() {
   var abaPro = ss.getSheetByName("TGFPRO");
   var dadosPro = abaPro.getDataRange().getValues();
   var mapPro = {}; // Usaremos um objeto para busca em O(1) pelo SKU
-  
+
   for (var i = 1; i < dadosPro.length; i++) {
     var sku = dadosPro[i][0];
     if (!sku) continue; // Pula linhas vazias
-    
+
     mapPro[sku] = {
       tipoProduto: dadosPro[i][1], // Simples ou Kit
       origemProduto: dadosPro[i][5],
@@ -54,16 +54,16 @@ function carregarBancoDeDados() {
   var abaKit = ss.getSheetByName("TGFKIT");
   var dadosKit = abaKit.getDataRange().getValues();
   var mapKit = {}; // Chave será o SKU_KIT, o valor será um Array de Componentes
-  
+
   for (var j = 1; j < dadosKit.length; j++) {
     var skuKit = dadosKit[j][0];
     if (!skuKit) continue;
-    
+
     // Se o kit ainda não existe no mapa, cria um array vazio para ele
     if (!mapKit[skuKit]) {
       mapKit[skuKit] = [];
     }
-    
+
     mapKit[skuKit].push({
       skuComponente: dadosKit[j][1],
       qtdComponente: parseFloat(dadosKit[j][2]) || 1,
@@ -101,10 +101,10 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
 
     // A MATEMÁTICA DA CARGA EFETIVA
     var alqEfetiva = alqOrigemNominal * (1 - percReducaoBC);
-    
+
     var res = { destaque: 0, caixa: 0 };
     var regimeFormatado = String(regimeProduto).trim();
-    
+
     if (regimeFormatado === "Débito") {
       res.destaque = alqEfetiva; res.caixa = alqEfetiva;
     } else if (regimeFormatado === "Estorno") {
@@ -130,7 +130,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       // Se não for do anúncio, puxa a padrão atrelada ao canal
       bloco.margemPonderada = (canalRequisitado === "Shopee") ? prodMaster.margemSHP : prodMaster.margemML;
     }
-    
+
     var impostos = definirImpostos(prodMaster.origemProduto, prodMaster.regimeIcmsSaida, prodMaster.redBcIcms);
     bloco.icmsDestaquePonderado = impostos.destaque;
     bloco.icmsCaixaPonderado = impostos.caixa;
@@ -147,7 +147,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
       ipi: prodMaster.ipi
     });
   }
-  
+
   // 2.2. CÁLCULO SE FOR UM KIT (O liquidificador algébrico)
   else if (prodMaster.tipoProduto === "Kit") {
     var componentes = db.kits[skuAnunciado];
@@ -158,7 +158,7 @@ function construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCus
     for (var k = 0; k < componentes.length; k++) {
       var comp = componentes[k];
       var dadosComp = db.produtos[comp.skuComponente];
-      
+
       var custoParte = (dadosComp.custoAquisicao * comp.qtdComponente) * qtdNoAnuncio;
       bloco.custoTotal += custoParte;
 
@@ -255,10 +255,10 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     // LÓGICA EXCLUSIVA: SIMPLES NACIONAL
     // 1. Imunidade de DIFAL (Tema 517 STF)
     difal = 0;
-    
+
     // 2. O ICMS próprio já está embutido no DAS, então zeramos o caixa para evitar bitributação
     cargaIcmsCaixa = 0;
-    
+
     // 3. Segregação de Receitas (CSOSN)
     var regimeFormatado = String(regimeIcmsSaida).trim();
     if (regimeFormatado === "Débito") {
@@ -300,11 +300,11 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
   // A NOVA TRAVA DE API (HTTP 400 - Bad Request)
   if (divisor <= 0) {
     var margemMaxTeorica = 1 - somaCustosVariaveis; // O limite da física tributária
-    
+
     // Formatação para exibição amigável
     var maxStr = (margemMaxTeorica * 100).toFixed(2) + "%";
     var divStr = (divisor * 100).toFixed(2) + "%";
-    
+
     return {
       sucesso: false,
       feedback: "400: Margem inviável. A soma de impostos e taxas já consome " + (somaCustosVariaveis * 100).toFixed(2) + "% do preço. Margem máxima teórica: " + maxStr + ". Divisor atual: " + divStr
@@ -326,12 +326,12 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
   // --- 3. PESAGEM E BUSCA DO FRETE BASE (TABELA CHEIA VERMELHA) ---
   var pesoCobrado = Math.max(blocoVirtual.pesoFisicoMaster, blocoVirtual.cubagemMaster);
-  
+
   // Função auxiliar que lê a matriz baseada no peso e na coluna
   var buscarFreteTabelaCheia = function(peso, colunaIndex) {
     // Array com os limites de peso em kg (Cada posição corresponde a uma linha da matriz abaixo)
     var limitesPeso = [0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 11.0, 13.0, 15.0, 17.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 125.0, 150.0, 9999];
-    
+
     // A Tabela Cheia (Validada no Excel)
     var matrizFrete = [
       [8.07, 9.36, 11.07, 24.70, 28.70, 32.90, 36.90, 41.90], // <= 0.3
@@ -391,7 +391,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
     // 5.1. Busca o frete na Tabela Cheia para a coluna que estamos testando
     var freteCheio = buscarFreteTabelaCheia(pesoCobrado, tier.col);
-    
+
     // 5.2. Aplica o multiplicador de desconto conforme a faixa (Abaixo ou Acima de R$ 79)
     var isAbaixo79 = (tier.col <= 2);
     var desconto = 0;
@@ -424,13 +424,13 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     // 5.3. A Álgebra do Preço
     if (tier.col === 0) {
       // REGRA ESPECIAL: Anúncios até 18.99 pagam no máx 50% do valor do produto em frete.
-      var precoSemTrava = (blocoVirtual.custoTotal + freteFinalSendoTestado) / divisor;
-      
+      var precoSemTrava = (blocoVirtual.custoTotal + freteFinalSendoTestado * (1 - cargaIpiEfetiva)) / divisor;
+
       // Se o frete calculado representa mais de 50% do preço de venda, a trava do ML é acionada.
       if (freteFinalSendoTestado > (precoSemTrava * 0.5)) {
         // Recalculando o preço isolando a variável Custo: Preço = Custo / (Divisor - 0.5)
-        if ((divisor - 0.5) > 0) {
-          precoCalculado = blocoVirtual.custoTotal / (divisor - 0.5);
+        if ((divisor - 0.5 + 0.5 * cargaIpiEfetiva) > 0) {
+          precoCalculado = blocoVirtual.custoTotal / (divisor - 0.5 + 0.5 * cargaIpiEfetiva);
         } else {
           precoCalculado = 999999; // Margem inviável para itens muito baratos
         }
@@ -439,7 +439,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
       }
     } else {
       // REGRA PADRÃO PARA AS DEMAIS FAIXAS
-      precoCalculado = (blocoVirtual.custoTotal + freteFinalSendoTestado) / divisor;
+      precoCalculado = (blocoVirtual.custoTotal + freteFinalSendoTestado * (1 - cargaIpiEfetiva)) / divisor;
     }
 
     // 5.4. Blindagem Decimal e Teste de Validação
@@ -458,23 +458,23 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     var freteCheioFallback = buscarFreteTabelaCheia(pesoCobrado, 7);
     var descFallback = isVerdeOuLider ? 0.50 : (isAmarela ? 0.40 : 0);
     var freteFallbackFinal = freteCheioFallback * (1 - descFallback);
-    
+
     if (config.regimeTributario === "Lucro Real" && config.tomarCredito && (config.baseCredito === "Frete" || config.baseCredito === "Frete + Comissões")) {
       freteFallbackFinal = freteFallbackFinal * (1 - config.pisCofins);
     }
-    
-    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal) / divisor;
+
+    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal * (1 - cargaIpiEfetiva)) / divisor;
     freteDoMelhorPreco = freteFallbackFinal;
   }
 
   // --- 7. MONTAGEM DA AUDITORIA FISCAL (DRE DA VENDA) ---
   var pFinal = Math.round(melhorPreco * 100) / 100;
-  
+
   // Recalculando os valores absolutos em R$ baseados no preço final cravado
   var calcComissao = pFinal * taxaEfetivaML;
   var calcIcmsCaixa = pFinal * cargaIcmsCaixa;
-  var calcIpi = pFinal * cargaIpiEfetiva;
-  
+  var calcIpi = (pFinal - freteDoMelhorPreco) * cargaIpiEfetiva;
+
   var calcDifal = 0;
   var calcFecop = 0;
   var calcPisCofins = 0;
@@ -569,7 +569,7 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
     var tier = faixasShopee[i];
     var comissaoTotalTier = tier.comissaoBase + taxaCampanhaExtra; // Ex: 20% + 2.5% = 22.5%
     var divisorTier = 1 - (somaImpostosEMargem + comissaoTotalTier);
-    
+
     // Trava de física tributária para esta faixa específica
     if (divisorTier <= 0) continue; 
 
@@ -617,13 +617,13 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
 
   // --- 3. MONTAGEM DA AUDITORIA FISCAL (DRE DA SHOPEE) ---
   var pFinal = Math.round(melhorPreco * 100) / 100;
-  
+
   // Custo de Plataforma desmembrado (Comissão % + Taxa Fixa R$ + Penalidades)
   var calcComissaoTotal = (pFinal * comissaoPercentualFinal) + taxaFixaAplicada;
-  
+
   var calcIcmsCaixa = pFinal * cargaIcmsCaixa;
   var calcIpi = pFinal * cargaIpiEfetiva;
-  
+
   var calcDifal = 0; var calcFecop = 0; var calcPisCofins = 0; var calcIrpj = 0; var calcCsll = 0;
 
   if (config.regimeTributario === "Simples Nacional") {
@@ -642,18 +642,18 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
 
   // Na DRE, alocaremos a Comissão % na coluna 'Comissão' (Coluna O) e a Taxa Fixa na coluna 'Frete/Envios' (Coluna P)
   // para manter a simetria com a estrutura atual da planilha.
-  var valorComissaoPura = pFinal * comissaoPercentualFinal;
-  var valorCustosFixosPlataforma = taxaFixaAplicada;
+  //var valorComissaoPura = pFinal * comissaoPercentualFinal;
+  //var valorCustosFixosPlataforma = taxaFixaAplicada;
 
-  var calcMargem = pFinal - blocoVirtual.custoTotal - valorComissaoPura - valorCustosFixosPlataforma - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
+  var calcMargem = pFinal - blocoVirtual.custoTotal - calcComissaoTotal - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
 
   return {
     sucesso: true,
     feedback: "200: Cálculo Shopee realizado com sucesso.",
     preco: pFinal,
     custo: blocoVirtual.custoTotal,
-    comissao: valorComissaoPura,
-    frete: valorCustosFixosPlataforma, 
+    comissao: calcComissaoTotal,
+    frete: 0, 
     icms: calcIcmsCaixa,
     difal: calcDifal,
     fecop: calcFecop,
@@ -675,27 +675,27 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
 function processarPrecificacaoEmMassa() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var abaAds = ss.getSheetByName("TGFADS");
-  
+
   // 1. Inicia o cronômetro mental e carrega o banco de dados
   var db = carregarBancoDeDados();
-  
+
   // 2. Lê todos os anúncios de uma vez só
   // Assumindo que os dados começam na linha 2 e vão até a última linha preenchida
   var ultimaLinha = abaAds.getLastRow();
   if (ultimaLinha < 2) return; // Se só tiver cabeçalho, aborta.
-  
+
   var rangeAds = abaAds.getRange(2, 1, ultimaLinha - 1, abaAds.getLastColumn());
   var dadosAds = rangeAds.getValues();
-  
+
   // 3. Prepara um Array vazio para guardar os preços calculados
   // Gravar célula por célula é lento. Vamos guardar tudo aqui e cuspir de uma vez.
   var resultadosPrecoFinal = [];
   var resultadosVuncom = [];
-  
+
   // 4. O Loop de Orquestração
   for (var i = 0; i < dadosAds.length; i++) {
     var linha = dadosAds[i];
-    
+
     // Mapeamento das colunas da TGFADS (Lembrando: Índice começa no ZERO)
     var skuAnunciado = linha[1];                        // Coluna B
     var qtdNoAnuncio = parseFloat(linha[2]) || 1;       // Coluna C
@@ -716,13 +716,13 @@ function processarPrecificacaoEmMassa() {
     // Captura a coluna L (Índice 11) e já converte para o percentual matemático
     var flagCampanha = String(linha[11]).trim().toUpperCase();
     var taxaCampanhaShopee = (flagCampanha === "SIM") ? 0.025 : 0;
-    
+
     // Ignora linhas vazias mantendo o alinhamento de 13 colunas
     if (!skuAnunciado) {
       resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", ""]);
       continue;
     }
-    
+
     // 5. Aciona o Engenheiro do Bloco Virtual (Módulo 1)
     var bloco = construirBlocoVirtual(skuAnunciado, qtdNoAnuncio, tipoMargem, margemCustomizada, canalVenda, db);
 
@@ -731,13 +731,13 @@ function processarPrecificacaoEmMassa() {
       resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", "404: SKU componente não encontrado no catálogo (TGFPRO)."]);
       continue;
     }
-    
+
     // 6. Aciona o Motor Financeiro (Módulo 2)
     // ----------------------------------------------------------------
     // O ROTEADOR OMNICHANNEL (A Chave de Trilhos)
     // ----------------------------------------------------------------
     var d; // Variável que receberá o objeto de resposta, independente do canal
-    
+
     if (canalVenda === "Shopee") {
       // Como o Módulo 2B ainda não foi escrito, disparamos um HTTP 501 (Not Implemented)
       // Passamos 0 e 0 para Campanha e Penalidade CPF por enquanto
@@ -746,14 +746,14 @@ function processarPrecificacaoEmMassa() {
       // Fallback de segurança e padrão: Mercado Livre
       d = calcularPrecoMLB(bloco, db.config, taxaCategoriaML, forcarFreteRapido, alqDestino, fecopDestino);
     }
-    
+
     // TRAVA DE SUCESSO E INJEÇÃO NA DRE
     if (!d.sucesso) {
       // Falhou no motor (ex: Margem de 100%). Imprime colunas vazias e o erro na coluna Y
       resultadosPrecoFinal.push(["", "", "", "", "", "", "", "", "", "", "", "", d.feedback]);
       continue; // Pula a explosão da TGF_VUNCOM (Isso limpa os erros #NUM!)
     }
-    
+
     // Sucesso! Empurra a matriz de 13 colunas da auditoria
     resultadosPrecoFinal.push([
       d.preco, d.custo, d.comissao, d.frete, d.icms, d.difal,
@@ -763,7 +763,7 @@ function processarPrecificacaoEmMassa() {
     // --- NOVA LÓGICA: RATEIO E EXPLOSÃO PARA TGF_VUNCOM ---
     var idAnuncio = linha[0]; // Captura o ID da Coluna A
     var valorAlvoTotal = 0;
-    
+
     // Acha a base total de 100% para fazer a proporção do Kit
     for (var v = 0; v < bloco.origemICMSArray.length; v++) {
       valorAlvoTotal += bloco.origemICMSArray[v].valorAlvoAbsoluto;
@@ -773,16 +773,16 @@ function processarPrecificacaoEmMassa() {
     for (var c = 0; c < bloco.origemICMSArray.length; c++) {
       var comp = bloco.origemICMSArray[c];
       var proporcao = comp.valorAlvoAbsoluto / valorAlvoTotal;
-      
+
       var vlrFreteRateio = d.frete * proporcao;
       var vlrProdRateio = (d.preco - d.frete) * proporcao;
-      
+
       // A MÁGICA DA DEFLAÇÃO: Extraindo o IPI do vProd
       var vlrProdReal = vlrProdRateio / (1 + comp.ipi);
       var vlrIpi = vlrProdRateio - vlrProdReal;
-      
+
       var vlrUniNfe = vlrProdReal / comp.qtdComponente; // Isolando o unitário
-      
+
       resultadosVuncom.push([
         idAnuncio,            // 1. ID_ANUNCIO
         skuAnunciado,         // 2. SKU_ANUNCIO
@@ -795,7 +795,7 @@ function processarPrecificacaoEmMassa() {
       ]);
     }
   }
-  
+
   // 7. A Injeção Final em Lote (Batch Write)
   // Coluna M é a 13ª. O tamanho (width) agora não é mais 1, são 12 colunas simultâneas!
   var rangeSaida = abaAds.getRange(2, 14, resultadosPrecoFinal.length, 13);
@@ -804,12 +804,12 @@ function processarPrecificacaoEmMassa() {
   // 8. A INJEÇÃO NA STAGING TABLE (TGF_VUNCOM)
   var abaVuncom = ss.getSheetByName("TGF_VUNCOM");
   var ultimaLinhaVuncom = abaVuncom.getLastRow();
-  
+
   // Limpa o lixo da rodada anterior (se houver dados da linha 2 em diante)
   if (ultimaLinhaVuncom > 1) {
     abaVuncom.getRange(2, 1, ultimaLinhaVuncom - 1, 8).clearContent();
   }
-  
+
   // Injeta a nova explosão de Kits com 7 colunas
   if (resultadosVuncom.length > 0) {
     abaVuncom.getRange(2, 1, resultadosVuncom.length, 8).setValues(resultadosVuncom);
