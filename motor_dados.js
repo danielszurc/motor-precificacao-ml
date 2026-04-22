@@ -279,8 +279,9 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
 
     // A Tese do Século (Base do PIS/COFINS excluindo o ICMS Destaque)
     // Nota: Se for Lucro Real, a Macro da planilha já zerou o config.irpj e config.csll
-    // fatorFederaisAjustado = config.pisCofins * (1 - cargaIcmsDestaque) + config.irpj + config.csll;
-    fatorFederaisAjustado = config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque - difal) + (config.irpj * baseReceitaBruta) + (config.csll * baseReceitaBruta);
+    // O PIS/COFINS incide sobre (Preço - IPI - ICMS Destaque - DIFAL)
+    // O IRPJ/CSLL incide sobre (Preço - IPI)
+    fatorFederaisAjustado = (config.pisCofins * (baseReceitaBruta - cargaIcmsDestaque - difal)) + ((config.irpj + config.csll) * baseReceitaBruta);
   }
 
   // LÓGICA DO CRÉDITO SOBRE A COMISSÃO (Lucro Real)
@@ -421,25 +422,34 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
       freteFinalSendoTestado = freteFinalSendoTestado * (1 - config.pisCofins);
     }
 
+    // O Ajuste do Numerador calculado AQUI, onde o frete já existe
+    var ajusteImpostoSobreFrete = (config.pisCofins + config.irpj + config.csll) * (freteFinalSendoTestado * cargaIpiEfetiva);
+
     // 5.3. A Álgebra do Preço
     if (tier.col === 0) {
       // REGRA ESPECIAL: Anúncios até 18.99 pagam no máx 50% do valor do produto em frete.
-      var precoSemTrava = (blocoVirtual.custoTotal + freteFinalSendoTestado * (1 - cargaIpiEfetiva)) / divisor;
+      var precoSemTrava = (blocoVirtual.custoTotal + (freteFinalSendoTestado * (1 - cargaIpiEfetiva)) + ajusteImpostoSobreFrete) / divisor;
 
       // Se o frete calculado representa mais de 50% do preço de venda, a trava do ML é acionada.
       if (freteFinalSendoTestado > (precoSemTrava * 0.5)) {
-        // Recalculando o preço isolando a variável Custo: Preço = Custo / (Divisor - 0.5)
-        if ((divisor - 0.5 + 0.5 * cargaIpiEfetiva) > 0) {
-          precoCalculado = blocoVirtual.custoTotal / (divisor - 0.5 + 0.5 * cargaIpiEfetiva);
+        // Recalculando o preço com a trava de 50%:
+        // Precisamos ajustar o divisor para compensar a isenção do IPI e a carga extra de federais
+        var multiplicadorFrete = (1 - cargaIpiEfetiva) + ((config.pisCofins + config.irpj + config.csll) * cargaIpiEfetiva);
+        var novoDivisorMicro = divisor - (0.5 * multiplicadorFrete);
+
+        if (novoDivisorMicro > 0) {
+          precoCalculado = blocoVirtual.custoTotal / novoDivisorMicro;
         } else {
           precoCalculado = 999999; // Margem inviável para itens muito baratos
         }
+
       } else {
         precoCalculado = precoSemTrava; // Passou liso, o frete não atingiu 50%
       }
     } else {
       // REGRA PADRÃO PARA AS DEMAIS FAIXAS
-      precoCalculado = (blocoVirtual.custoTotal + freteFinalSendoTestado * (1 - cargaIpiEfetiva)) / divisor;
+      // A fórmula absoluta ganha o ajuste no numerador
+      precoCalculado = (blocoVirtual.custoTotal + (freteFinalSendoTestado * (1 - cargaIpiEfetiva)) + ajusteImpostoSobreFrete) / divisor;
     }
 
     // 5.4. Blindagem Decimal e Teste de Validação
@@ -463,7 +473,9 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
       freteFallbackFinal = freteFallbackFinal * (1 - config.pisCofins);
     }
 
-    melhorPreco = (blocoVirtual.custoTotal + freteFallbackFinal * (1 - cargaIpiEfetiva)) / divisor;
+    // NOVO: Aplica a mesma compensação de impostos federais para o frete fallback
+    var ajusteFallback = (config.pisCofins + config.irpj + config.csll) * (freteFallbackFinal * cargaIpiEfetiva);
+    melhorPreco = (blocoVirtual.custoTotal + (freteFallbackFinal * (1 - cargaIpiEfetiva)) + ajusteFallback) / divisor;
     freteDoMelhorPreco = freteFallbackFinal;
   }
 
@@ -490,10 +502,13 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
       calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal;
       calcDifal = (difalTotalMath * pFinal) - calcFecop;
     }
-    var baseBruta = 1 - cargaIpiEfetiva;
-    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque - difal));
-    calcIrpj = pFinal * (config.irpj * baseBruta);
-    calcCsll = pFinal * (config.csll * baseBruta);
+    // A RECEITA LÍQUIDA DE IPI: Preço Total menos o valor real absoluto do IPI
+    var receitaLivreDeIpi = pFinal - calcIpi;
+
+    // Tributos Federais calculados estritamente sobre a base purificada
+    calcPisCofins = (receitaLivreDeIpi - (pFinal * cargaIcmsDestaque) - calcDifal - calcFecop) * config.pisCofins;
+    calcIrpj = receitaLivreDeIpi * config.irpj;
+    calcCsll = receitaLivreDeIpi * config.csll;
   }
 
   // A Margem Líquida calculada por resíduo garante que a soma das colunas bata 100% com o Preço
@@ -517,6 +532,7 @@ function calcularPrecoMLB(blocoVirtual, config, taxaCategoriaML, forcarFreteRapi
     margem: calcMargem
   };
 }
+
 
 /**
  * MÓDULO 2B: O MOTOR FINANCEIRO DA SHOPEE
@@ -634,17 +650,18 @@ function calcularPrecoSHP(blocoVirtual, config, alqDestino, fecopDestino, taxaCa
       calcFecop = Math.min(difalTotalMath, fecopDestino) * pFinal;
       calcDifal = (difalTotalMath * pFinal) - calcFecop;
     }
-    var baseBruta = 1 - cargaIpiEfetiva;
-    calcPisCofins = pFinal * (config.pisCofins * (baseBruta - cargaIcmsDestaque - difal));
-    calcIrpj = pFinal * (config.irpj * baseBruta);
-    calcCsll = pFinal * (config.csll * baseBruta);
+    // (NOVO TRECHO PURIFICADO - APENAS GRANDEZAS EM R$)
+    // A RECEITA LÍQUIDA DE IPI: Preço Total menos o valor real absoluto do IPI
+    var receitaLivreDeIpi = pFinal - calcIpi;
+
+    // Tributos Federais calculados estritamente sobre a base purificada em REAIS
+    calcPisCofins = (receitaLivreDeIpi - (pFinal * cargaIcmsDestaque) - calcDifal - calcFecop) * config.pisCofins;
+    calcIrpj = receitaLivreDeIpi * config.irpj;
+    calcCsll = receitaLivreDeIpi * config.csll;
   }
 
   // Na DRE, alocaremos a Comissão % na coluna 'Comissão' (Coluna O) e a Taxa Fixa na coluna 'Frete/Envios' (Coluna P)
   // para manter a simetria com a estrutura atual da planilha.
-  //var valorComissaoPura = pFinal * comissaoPercentualFinal;
-  //var valorCustosFixosPlataforma = taxaFixaAplicada;
-
   var calcMargem = pFinal - blocoVirtual.custoTotal - calcComissaoTotal - calcIcmsCaixa - calcDifal - calcFecop - calcPisCofins - calcIpi - calcIrpj - calcCsll;
 
   return {
